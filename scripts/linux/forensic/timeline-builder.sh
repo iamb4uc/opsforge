@@ -92,7 +92,7 @@ done
   printf '# Linux Timeline\n\n'
   printf '| timestamp | source | event_type | severity | summary |\n'
   printf '|---|---|---|---|---|\n'
-  tail -n +2 "$CSV" | head -500 | awk -F, '{gsub(/"/,""); print "| "$1" | "$2" | "$3" | "$7" | "$6" |"}'
+  awk -F, 'NR > 1 && NR <= 501 {gsub(/"/,""); print "| "$1" | "$2" | "$3" | "$7" | "$6" |"}' "$CSV"
 } > "$OUT_DIR/timeline.md"
 cp "$OUT_DIR/timeline.md" "$OUT_DIR/report.md"
 finalize_findings_json "$TMP_FINDINGS" "$OUT_DIR/findings.json"

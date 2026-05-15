@@ -105,7 +105,7 @@ cp "$OUT_DIR/findings.json" "$OUT_DIR/normalized/findings.json"
   printf '%s\n' "- Host: \`$HOST\`"
   printf '%s\n\n' "- Output: \`$OUT_DIR\`"
   printf '## Scanned Locations\n\n'
-  sed 's/^/- `/' "$RAW" | sed 's/$/`/' | head -200
+  awk 'NR <= 200 { printf "- `%s`\n", $0 }' "$RAW"
   printf '\n## Suspicious Matches\n\n'
   if [ -s "$MATCHES" ]; then
     sed 's/^/- `/' "$MATCHES" | sed 's/$/`/'

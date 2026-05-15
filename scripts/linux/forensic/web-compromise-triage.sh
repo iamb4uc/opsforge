@@ -63,7 +63,7 @@ if [ "$(wc -l < "$OUT_DIR/suspicious-requests.csv")" -gt 1 ]; then
   write_finding_json "$TMP_FINDINGS" "LINUX-WEB-SUSPICIOUS-REQUESTS" "Suspicious web requests detected" "high" "$HOST" "forensic" "suspicious-requests.csv" "Review source IPs, request payloads, response codes, and webroot file changes."
 fi
 
-awk '{print $1}' "$OUT_DIR/suspicious-requests.csv" 2>/dev/null | sort | uniq -c | sort -nr | head -50 > "$OUT_DIR/top-source-ips.txt" || true
+awk '{print $1}' "$OUT_DIR/suspicious-requests.csv" 2>/dev/null | sort | uniq -c | sort -nr | awk 'NR <= 50 {print}' > "$OUT_DIR/top-source-ips.txt" || true
 
 finalize_findings_json "$TMP_FINDINGS" "$OUT_DIR/findings.json"
 cp "$OUT_DIR/findings.json" "$OUT_DIR/normalized/findings.json"
