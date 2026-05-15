@@ -58,10 +58,10 @@ scan_path() {
     printf '%s\n' "$path" >> "$RAW"
     grep -Eni "$PATTERN" "$path" >> "$MATCHES" 2>/dev/null || true
   elif [ -d "$path" ]; then
-    find "$path" -xdev -maxdepth 3 -type f -print 2>/dev/null | while IFS= read -r file; do
+    while IFS= read -r file; do
       printf '%s\n' "$file" >> "$RAW"
       grep -Eni "$PATTERN" "$file" >> "$MATCHES" 2>/dev/null || true
-    done
+    done < <(find "$path" -xdev -maxdepth 3 -type f -print 2>/dev/null || true)
   fi
 }
 
@@ -108,7 +108,7 @@ cp "$OUT_DIR/findings.json" "$OUT_DIR/normalized/findings.json"
   awk 'NR <= 200 { printf "- `%s`\n", $0 }' "$RAW"
   printf '\n## Suspicious Matches\n\n'
   if [ -s "$MATCHES" ]; then
-    sed 's/^/- `/' "$MATCHES" | sed 's/$/`/'
+    awk '{ printf "- `%s`\n", $0 }' "$MATCHES"
   else
     printf 'No suspicious persistence strings were detected.\n'
   fi

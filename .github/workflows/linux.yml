@@ -54,6 +54,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          docker run -i --rm -v "$PWD:/repo" -w /repo ubuntu:24.04 bash -s <<'CONTAINER'
+          set -euo pipefail
+          apt-get update >/dev/null
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            bash ca-certificates coreutils findutils gawk grep gzip iproute2 openssl procps sed tar util-linux \
+            >/dev/null
+
           root="$(mktemp -d)"
           cfg="$(mktemp -d)"
           printf 'localhost|127.0.0.1|1\n' > "$cfg/network-targets.conf"
@@ -96,3 +103,5 @@ jobs:
 
           summaries="$(find "$root" -maxdepth 2 -name summary.txt | wc -l)"
           test "$summaries" -ge 16
+          echo "summaries=$summaries"
+          CONTAINER
