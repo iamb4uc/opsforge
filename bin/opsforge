@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+IFS=$'\n\t'
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  opsforge linux triage [args...]
+  opsforge linux persistence [args...]
+  opsforge linux deleted-binaries [args...]
+  opsforge linux proc-tree [args...]
+  opsforge linux suid --baseline|--check [args...]
+  opsforge linux priv-surface [args...]
+  opsforge linux ssh-audit [args...]
+  opsforge linux config-drift --baseline|--check [args...]
+  opsforge linux net-drift [args...]
+  opsforge linux disk-rca [args...]
+  opsforge linux tls --targets configs/linux/tls-targets.conf [args...]
+  opsforge linux firewall [args...]
+  opsforge linux log-silence --config FILE [args...]
+  opsforge linux timeline [args...]
+  opsforge linux web-triage [args...]
+
+Examples:
+  opsforge linux triage --output ./output --markdown --json
+  opsforge linux persistence --output ./output
+  opsforge linux tls --targets configs/linux/tls-targets.conf
+USAGE
+}
+
+[ "$#" -ge 2 ] || { usage; exit 2; }
+platform="$1"
+command_name="$2"
+shift 2
+
+case "$platform:$command_name" in
+  linux:triage) exec "$ROOT/scripts/linux/endpoint/linux-triage-collector.sh" "$@" ;;
+  linux:persistence) exec "$ROOT/scripts/linux/persistence/linux-persistence-hunter.sh" "$@" ;;
+  linux:deleted-binaries|linux:deleted-binary) exec "$ROOT/scripts/linux/forensic/deleted-binary-detector.sh" "$@" ;;
+  linux:proc-tree|linux:process-tree) exec "$ROOT/scripts/linux/endpoint/process-tree-anomaly.sh" "$@" ;;
+  linux:suid) exec "$ROOT/scripts/linux/hardening/suid-drift-monitor.sh" "$@" ;;
+  linux:priv-surface|linux:privilege) exec "$ROOT/scripts/linux/hardening/linux-privilege-surface-audit.sh" "$@" ;;
+  linux:ssh-audit|linux:ssh) exec "$ROOT/scripts/linux/hardening/ssh-hardening-audit.sh" "$@" ;;
+  linux:config-drift) exec "$ROOT/scripts/linux/hardening/config-drift-monitor.sh" "$@" ;;
+  linux:net-drift|linux:network-drift) exec "$ROOT/scripts/linux/network/network-path-drift.sh" "$@" ;;
+  linux:disk-rca) exec "$ROOT/scripts/linux/noc/disk-pressure-rca.sh" "$@" ;;
+  linux:tls) exec "$ROOT/scripts/linux/network/tls-inventory-scanner.sh" "$@" ;;
+  linux:firewall) exec "$ROOT/scripts/linux/network/firewall-rule-analyzer.sh" "$@" ;;
+  linux:log-silence) exec "$ROOT/scripts/linux/siem/log-source-silence-detector.sh" "$@" ;;
+  linux:timeline) exec "$ROOT/scripts/linux/forensic/timeline-builder.sh" "$@" ;;
+  linux:web-triage) exec "$ROOT/scripts/linux/forensic/web-compromise-triage.sh" "$@" ;;
+  -h:*|--help:*) usage; exit 0 ;;
+  *) printf 'Unknown command: %s %s\n\n' "$platform" "$command_name" >&2; usage; exit 2 ;;
+esac
