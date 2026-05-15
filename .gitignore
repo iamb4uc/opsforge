@@ -1,0 +1,6 @@
+output/*
+!output/.gitkeep
+
+*.tmp
+*.log
+*.tar.gz
