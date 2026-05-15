@@ -1,0 +1,85 @@
+name: windows
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  powershell:
+    name: powershell validation
+    runs-on: windows-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: parser check
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $files = Get-ChildItem -Path bin,lib,scripts -Recurse -File -Include *.ps1
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errors | Format-List | Out-String | Write-Error
+            }
+          }
+
+      - name: wrapper command map
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $wrapper = Get-Content -Raw -Path .\bin\opsforge.ps1
+          $paths = [regex]::Matches($wrapper, "Join-Path \$Root '([^']+)'") | ForEach-Object { $_.Groups[1].Value }
+          foreach ($path in $paths) {
+            if (-not (Test-Path $path)) {
+              throw "wrapper references missing script: $path"
+            }
+          }
+
+      - name: command availability
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $commands = @(
+            'Get-CimInstance',
+            'Get-LocalUser',
+            'Get-LocalGroupMember',
+            'Get-Process',
+            'Get-Service',
+            'Get-ScheduledTask',
+            'Get-ScheduledTaskInfo',
+            'Get-NetTCPConnection',
+            'Get-NetFirewallProfile',
+            'Get-NetFirewallRule',
+            'Get-NetFirewallPortFilter',
+            'Get-NetFirewallAddressFilter',
+            'Get-NetAdapter',
+            'Get-NetRoute',
+            'Get-DnsClientCache',
+            'Get-WinEvent',
+            'Get-EventLog',
+            'Get-HotFix',
+            'Get-AuthenticodeSignature',
+            'Get-MpComputerStatus',
+            'Get-MpPreference'
+          )
+          foreach ($command in $commands) {
+            if (-not (Get-Command $command -ErrorAction SilentlyContinue)) {
+              throw "missing expected Windows command: $command"
+            }
+          }
+
+      - name: pester if available
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          if (Get-Module -ListAvailable -Name Pester) {
+            Invoke-Pester -Path .\tests\pester
+          } else {
+            Write-Host "Pester not installed on runner; skipping"
+          }
