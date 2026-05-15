@@ -65,7 +65,13 @@ jobs:
             name="$1"
             shift
             echo "::group::$name"
-            timeout 180 "$@" --quiet
+            log="$root/$name.log"
+            if ! timeout 180 "$@" >"$log" 2>&1; then
+              cat "$log"
+              echo "::endgroup::"
+              return 1
+            fi
+            cat "$log"
             echo "::endgroup::"
           }
 

@@ -58,14 +58,7 @@ foreach ($record in $records) {
 }
 
 Save-OpsForgeFindings -Findings $findings.ToArray() -OutputDirectory $OutDir
-@(
-    '# Windows Network Exposure Mapper',
-    '',
-    "- Host: `$env:COMPUTERNAME`",
-    "- Listening sockets: $(@($records).Count)",
-    "- Findings: $($findings.Count)",
-    '',
-    'Raw data is stored under `raw\`.'
-) | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'report.md')
+$reportLines = @('# Windows Network Exposure Mapper', '', "- Host: $env:COMPUTERNAME", "- Listening sockets: $(@($records).Count)", "- Findings: $($findings.Count)", '', 'Raw data is stored under `raw\`.')
+Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'report.md') -Value $reportLines
 Save-OpsForgeSummary -OutputDirectory $OutDir -Title 'Windows network exposure mapper' -FindingCount $findings.Count
 Write-OpsForgeInfo -Message "Output written to $OutDir" -Quiet:$Quiet

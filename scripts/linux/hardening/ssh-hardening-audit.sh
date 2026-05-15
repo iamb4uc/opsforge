@@ -47,6 +47,7 @@ TMP_FINDINGS="$OUT_DIR/normalized/findings.tmp"
 
 cfg_value() {
   local key="$1"
+  [ -r "$SSHD_CONFIG" ] || return 0
   awk -v k="$key" 'tolower($1)==tolower(k) && $0 !~ /^[[:space:]]*#/ {v=$2} END{print v}' "$SSHD_CONFIG" 2>/dev/null
 }
 

@@ -92,13 +92,7 @@ Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object 
 }
 
 Save-OpsForgeFindings -Findings $findings.ToArray() -OutputDirectory $OutDir
-@(
-    '# Windows Triage Collector',
-    '',
-    "- Host: `$env:COMPUTERNAME`",
-    "- Findings: $($findings.Count)",
-    '',
-    'Raw evidence is stored under `raw\`.'
-) | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'report.md')
+$reportLines = @('# Windows Triage Collector', '', "- Host: $env:COMPUTERNAME", "- Findings: $($findings.Count)", '', 'Raw evidence is stored under `raw\`.')
+Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'report.md') -Value $reportLines
 Save-OpsForgeSummary -OutputDirectory $OutDir -Title 'Windows triage collector' -FindingCount $findings.Count
 Write-OpsForgeInfo -Message "Output written to $OutDir" -Quiet:$Quiet

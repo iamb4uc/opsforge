@@ -66,11 +66,8 @@ function Save-OpsForgeSummary {
         [string]$Title,
         [int]$FindingCount
     )
-    @(
-        $Title,
-        "Output: $OutputDirectory",
-        "Findings: $FindingCount"
-    ) | Set-Content -Encoding UTF8 -Path (Join-Path $OutputDirectory 'summary.txt')
+    $lines = @($Title, "Output: $OutputDirectory", "Findings: $FindingCount")
+    Set-Content -Encoding UTF8 -Path (Join-Path $OutputDirectory 'summary.txt') -Value $lines
 }
 
 function Test-OpsForgeUserWritablePath {

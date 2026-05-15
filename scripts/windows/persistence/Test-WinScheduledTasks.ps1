@@ -57,14 +57,7 @@ foreach ($task in $tasks) {
 }
 
 Save-OpsForgeFindings -Findings $findings.ToArray() -OutputDirectory $OutDir
-@(
-    '# Windows Scheduled Task Auditor',
-    '',
-    "- Host: `$env:COMPUTERNAME`",
-    "- Tasks collected: $(@($tasks).Count)",
-    "- Findings: $($findings.Count)",
-    '',
-    'Raw task data: `raw\scheduled-tasks.json`'
-) | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'report.md')
+$reportLines = @('# Windows Scheduled Task Auditor', '', "- Host: $env:COMPUTERNAME", "- Tasks collected: $(@($tasks).Count)", "- Findings: $($findings.Count)", '', 'Raw task data: `raw\scheduled-tasks.json`')
+Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'report.md') -Value $reportLines
 Save-OpsForgeSummary -OutputDirectory $OutDir -Title 'Windows scheduled task auditor' -FindingCount $findings.Count
 Write-OpsForgeInfo -Message "Output written to $OutDir" -Quiet:$Quiet
