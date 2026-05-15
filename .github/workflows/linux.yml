@@ -67,8 +67,9 @@ jobs:
             echo "::group::$name"
             log="$root/$name.log"
             if ! timeout 180 "$@" >"$log" 2>&1; then
-              cat "$log"
               echo "::endgroup::"
+              echo "::error::$name failed"
+              cat "$log"
               return 1
             fi
             cat "$log"

@@ -88,7 +88,10 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
-          if (Get-Module -ListAvailable -Name Pester) {
+          $tests = Get-ChildItem -Path .\tests\pester -Recurse -Filter *.Tests.ps1 -ErrorAction SilentlyContinue
+          if (-not $tests) {
+            Write-Host "No Pester tests found; skipping"
+          } elseif (Get-Module -ListAvailable -Name Pester) {
             Invoke-Pester -Path .\tests\pester
           } else {
             Write-Host "Pester not installed on runner; skipping"
