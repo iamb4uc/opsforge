@@ -1,6 +1,6 @@
-# opsforge-shell
+# opsforge
 
-opsforge-shell is a shell-only defensive operations toolkit for SOC analysts,
+opsforge is a shell-only defensive operations toolkit for SOC analysts,
 NOC engineers, Linux administrators, Windows administrators, incident responders,
 and security engineers.
 

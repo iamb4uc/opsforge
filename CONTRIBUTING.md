@@ -1,6 +1,6 @@
 # Contributing
 
-opsforge-shell accepts shell-only defensive operations scripts.
+opsforge accepts shell-only defensive operations scripts.
 
 ## Rules
 

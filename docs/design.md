@@ -1,6 +1,6 @@
 # Design
 
-opsforge-shell is intentionally shell-only. The toolkit favors scripts that can
+opsforge is intentionally shell-only. The toolkit favors scripts that can
 run on constrained incident-response hosts without installing a language runtime.
 
 ## Principles

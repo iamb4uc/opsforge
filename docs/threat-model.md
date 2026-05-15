@@ -1,6 +1,6 @@
 # Threat Model
 
-opsforge-shell supports defensive operations on hosts where responders need
+opsforge supports defensive operations on hosts where responders need
 fast evidence without deploying new runtimes.
 
 ## In Scope
