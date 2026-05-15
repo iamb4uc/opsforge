@@ -61,6 +61,14 @@ collect() {
   safe_run "$OUT_DIR/raw/$name.txt" "$@"
 }
 
+bounded_find() {
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 45 find "$@"
+  else
+    find "$@"
+  fi
+}
+
 collect hostname hostname
 collect kernel uname -a
 collect uptime uptime
@@ -78,7 +86,7 @@ collect cron-jobs sh -c 'for p in /etc/crontab /etc/cron.d /etc/cron.daily /etc/
 collect sudoers sh -c 'find /etc/sudoers /etc/sudoers.d -maxdepth 2 -type f -print -exec sed -n "1,120p" {} \; 2>/dev/null || true'
 collect authorized-keys sh -c 'find /root /home -path "*/.ssh/authorized_keys" -type f -print -exec ls -l {} \; -exec sed -n "1,80p" {} \; 2>/dev/null || true'
 collect recent-modified-files sh -c 'find /etc /usr/local /opt /tmp /var/tmp -xdev -type f -mtime -7 -printf "%TY-%Tm-%Td %TH:%TM %m %u %g %p\n" 2>/dev/null | sort | tail -500'
-collect suid-sgid-files sh -c 'find / -xdev \( -perm -4000 -o -perm -2000 \) -type f -printf "%TY-%Tm-%Td %TH:%TM %m %u %g %p\n" 2>/dev/null | sort'
+collect suid-sgid-files bash -c 'if command -v timeout >/dev/null 2>&1; then timeout 45 find / -xdev \( -perm -4000 -o -perm -2000 \) -type f -printf "%TY-%Tm-%Td %TH:%TM %m %u %g %p\n" 2>/dev/null || true; else find / -xdev \( -perm -4000 -o -perm -2000 \) -type f -printf "%TY-%Tm-%Td %TH:%TM %m %u %g %p\n" 2>/dev/null || true; fi | sort'
 collect kernel-modules sh -c 'lsmod 2>/dev/null || cat /proc/modules'
 collect journal-errors sh -c 'command -v journalctl >/dev/null 2>&1 && journalctl -p err -n 300 --no-pager || true'
 collect auth-log sh -c 'for f in /var/log/auth.log /var/log/secure; do [ -r "$f" ] && tail -500 "$f"; done'
@@ -112,7 +120,7 @@ while IFS= read -r file; do
     "Remove world-write permissions and investigate recent modification history."
 done < "$OUT_DIR/normalized/world-writable-sensitive-files.txt"
 
-find / -xdev \( -perm -4000 -o -perm -2000 \) -type f -mtime -14 -print 2>/dev/null > "$OUT_DIR/normalized/recent-suid-sgid.txt" || true
+bounded_find / -xdev \( -perm -4000 -o -perm -2000 \) -type f -mtime -14 -print 2>/dev/null > "$OUT_DIR/normalized/recent-suid-sgid.txt" || true
 while IFS= read -r file; do
   [ -n "$file" ] || continue
   write_finding_json "$TMP_FINDINGS" "LINUX-TRIAGE-SUID-$(printf '%s' "$file" | cksum | awk '{print $1}')" \
