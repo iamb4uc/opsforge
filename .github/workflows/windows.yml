@@ -16,17 +16,26 @@ jobs:
         uses: actions/checkout@v4
 
       - name: parser check
-        shell: powershell
+        shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $files = Get-ChildItem -Path bin,lib,scripts -Recurse -File -Include *.ps1
+          $failed = $false
           foreach ($file in $files) {
             $tokens = $null
             $errors = $null
             [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$errors) | Out-Null
             if ($errors.Count -gt 0) {
-              $errors | Format-List | Out-String | Write-Error
+              $failed = $true
+              foreach ($errorRecord in $errors) {
+                $line = $errorRecord.Extent.StartLineNumber
+                $column = $errorRecord.Extent.StartColumnNumber
+                Write-Host "::error file=$($file.FullName),line=$line,col=$column::$($errorRecord.Message)"
+              }
             }
+          }
+          if ($failed) {
+            throw "PowerShell parser validation failed"
           }
 
       - name: wrapper command map

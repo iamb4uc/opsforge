@@ -37,7 +37,8 @@ jobs:
         run: |
           set -euo pipefail
           if command -v shellcheck >/dev/null 2>&1; then
-            shellcheck bin/opsforge lib/*.sh scripts/linux/**/*.sh
+            mapfile -t files < <(find bin lib scripts/linux -type f \( -name '*.sh' -o -name opsforge \) | sort)
+            shellcheck -S error "${files[@]}"
           else
             echo "shellcheck not installed on runner; skipping"
           fi
