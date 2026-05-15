@@ -67,8 +67,8 @@ function Save-OpsForgeSummary {
         [int]$FindingCount
     )
     @(
-        $Title
-        "Output: $OutputDirectory"
+        $Title,
+        "Output: $OutputDirectory",
         "Findings: $FindingCount"
     ) | Set-Content -Encoding UTF8 -Path (Join-Path $OutputDirectory 'summary.txt')
 }

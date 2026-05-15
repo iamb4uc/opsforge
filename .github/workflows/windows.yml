@@ -30,7 +30,8 @@ jobs:
               foreach ($errorRecord in $errors) {
                 $line = $errorRecord.Extent.StartLineNumber
                 $column = $errorRecord.Extent.StartColumnNumber
-                Write-Host "::error file=$($file.FullName),line=$line,col=$column::$($errorRecord.Message)"
+                Write-Host ("{0}:{1}:{2}: {3}" -f $file.FullName, $line, $column, $errorRecord.Message)
+                Write-Host ("::error file={0},line={1},col={2}::{3}" -f $file.FullName, $line, $column, $errorRecord.Message)
               }
             }
           }
