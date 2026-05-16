@@ -1,11 +1,13 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$RepoRoot = Resolve-Path (Join-Path $PSScriptRoot '..\..')
-
 Describe 'opsforge PowerShell scripts' {
+    BeforeAll {
+        $script:RepoRoot = Resolve-Path (Join-Path $PSScriptRoot '..\..')
+    }
+
     It 'parse without syntax errors' {
-        $files = Get-ChildItem -Path (Join-Path $RepoRoot 'bin'), (Join-Path $RepoRoot 'lib'), (Join-Path $RepoRoot 'scripts') -Recurse -File -Include *.ps1
+        $files = Get-ChildItem -Path (Join-Path $script:RepoRoot 'bin'), (Join-Path $script:RepoRoot 'lib'), (Join-Path $script:RepoRoot 'scripts') -Recurse -File -Include *.ps1
         $messages = @()
 
         foreach ($file in $files) {
@@ -21,12 +23,12 @@ Describe 'opsforge PowerShell scripts' {
     }
 
     It 'dispatches only to scripts that exist' {
-        $wrapper = Get-Content -Raw -Path (Join-Path $RepoRoot 'bin\opsforge.ps1')
+        $wrapper = Get-Content -Raw -Path (Join-Path $script:RepoRoot 'bin\opsforge.ps1')
         $paths = [regex]::Matches($wrapper, "Join-Path \$Root '([^']+)'") | ForEach-Object { $_.Groups[1].Value }
         $missing = @()
 
         foreach ($path in $paths) {
-            if (-not (Test-Path (Join-Path $RepoRoot $path))) {
+            if (-not (Test-Path (Join-Path $script:RepoRoot $path))) {
                 $missing += $path
             }
         }
