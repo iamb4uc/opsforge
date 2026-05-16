@@ -1,0 +1,189 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+IFS=$'\n\t'
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TEST_ROOT="${OPSFORGE_TEST_OUTPUT:-$ROOT/.ci-artifacts}"
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  bin/test syntax
+  bin/test help
+  bin/test shellcheck
+  bin/test linux-fixtures
+  bin/test linux-feasibility
+  bin/test all
+
+Runs local validation for opsforge. The tests are read-only against the host and
+write their own evidence under .ci-artifacts/ unless OPSFORGE_TEST_OUTPUT is set.
+USAGE
+}
+
+say() {
+  printf '[test] %s\n' "$*"
+}
+
+fail() {
+  printf '[test] ERROR: %s\n' "$*" >&2
+  exit 1
+}
+
+make_run_dir() {
+  local name="$1"
+  local stamp dir
+  stamp="$(date +%Y%m%d-%H%M%S)"
+  mkdir -p "$TEST_ROOT"
+  dir="$(mktemp -d "$TEST_ROOT/$name-$stamp.XXXXXX")"
+  chmod 755 "$dir"
+  printf '%s\n' "$dir"
+}
+
+assert_file() {
+  local file="$1"
+  [ -f "$file" ] || fail "expected file was not created: $file"
+}
+
+assert_text() {
+  local file="$1"
+  local pattern="$2"
+  grep -F "$pattern" "$file" >/dev/null 2>&1 || fail "expected '$pattern' in $file"
+}
+
+latest_output_dir() {
+  local base="$1"
+  local match="$2"
+  find "$base" -mindepth 1 -maxdepth 1 -type d -name "*-$match-*" -printf '%T@ %p\n' |
+    sort -n |
+    awk 'END {print $2}'
+}
+
+test_syntax() {
+  say "checking bash syntax"
+  while IFS= read -r file; do
+    bash -n "$file"
+  done < <(find "$ROOT/bin" "$ROOT/lib" "$ROOT/scripts" -type f \( -name '*.sh' -o -name opsforge -o -name test \) | sort)
+}
+
+test_help() {
+  say "checking linux script help output"
+  while IFS= read -r file; do
+    "$file" --help >/dev/null
+  done < <(find "$ROOT/scripts/linux" -type f -name '*.sh' | sort)
+  "$ROOT/bin/opsforge" >/dev/null 2>&1 && fail "opsforge without arguments should exit non-zero"
+  [ "$?" -eq 2 ] || fail "opsforge without arguments should exit 2"
+}
+
+test_shellcheck() {
+  if ! command -v shellcheck >/dev/null 2>&1; then
+    say "shellcheck not installed; skipping"
+    return 0
+  fi
+  say "running shellcheck"
+  mapfile -t files < <(find "$ROOT/bin" "$ROOT/lib" "$ROOT/scripts/linux" -type f \( -name '*.sh' -o -name opsforge -o -name test \) | sort)
+  shellcheck -S error "${files[@]}"
+}
+
+test_linux_fixtures() {
+  say "running linux fixture tests"
+  local run_dir fixture_dir home_dir log_file persistence_dir net_cfg tls_cfg silence_cfg
+  run_dir="$(make_run_dir linux-fixtures)"
+  fixture_dir="$ROOT/tests/fixtures/linux"
+  home_dir="$run_dir/home"
+  cp -R "$fixture_dir/home" "$home_dir"
+  mkdir -p "$home_dir/.ssh" "$run_dir/logs"
+  cp "$fixture_dir/logs/app.fixture" "$run_dir/logs/app.log"
+
+  HOME="$home_dir" "$ROOT/bin/opsforge" linux persistence --output "$run_dir" --quiet
+  persistence_dir="$(latest_output_dir "$run_dir" linux-persistence-hunter)"
+  [ -n "$persistence_dir" ] || fail "persistence hunter did not create an output directory"
+  assert_file "$persistence_dir/findings.json"
+  assert_text "$persistence_dir/findings.json" "LINUX-PERSISTENCE"
+  assert_text "$persistence_dir/report.md" "Suspicious Matches"
+
+  log_file="$run_dir/logs/app.log"
+  silence_cfg="$run_dir/log-sources.conf"
+  printf 'fixture-app|%s|critical|1440\n' "$log_file" > "$silence_cfg"
+  "$ROOT/bin/opsforge" linux log-silence --config "$silence_cfg" --output "$run_dir" --quiet
+  assert_file "$(latest_output_dir "$run_dir" log-source-silence-detector)/summary.txt"
+
+  net_cfg="$run_dir/network-targets.conf"
+  cp "$fixture_dir/network-targets.conf" "$net_cfg"
+  "$ROOT/bin/opsforge" linux net-drift --targets "$net_cfg" --output "$run_dir" --quiet
+  assert_text "$(latest_output_dir "$run_dir" network-path-drift)/findings.json" "LINUX-NETPATH-TCP"
+
+  tls_cfg="$run_dir/tls-targets.conf"
+  cp "$fixture_dir/tls-targets.conf" "$tls_cfg"
+  "$ROOT/bin/opsforge" linux tls --targets "$tls_cfg" --output "$run_dir" --quiet
+  assert_text "$(latest_output_dir "$run_dir" tls-inventory-scanner)/findings.json" "TLS-"
+
+  say "fixture evidence: $run_dir"
+}
+
+run_one() {
+  local name="$1"
+  shift
+  echo "::group::$name"
+  local log="$LINUX_FEASIBILITY_ROOT/$name.log"
+  if ! timeout 180 "$@" >"$log" 2>&1; then
+    echo "::endgroup::"
+    printf '::error::%s failed\n' "$name"
+    cat "$log"
+    return 1
+  fi
+  cat "$log"
+  echo "::endgroup::"
+}
+
+test_linux_feasibility() {
+  say "running linux feasibility suite"
+  local cfg summaries
+  LINUX_FEASIBILITY_ROOT="$(make_run_dir linux-feasibility)"
+  export LINUX_FEASIBILITY_ROOT
+  cfg="$LINUX_FEASIBILITY_ROOT/config"
+  mkdir -p "$cfg"
+  printf 'localhost|127.0.0.1|1\n' > "$cfg/network-targets.conf"
+  printf 'localhost|127.0.0.1|1\n' > "$cfg/tls-targets.conf"
+  printf 'tmp-log|%s/test.log|critical|1440\n' "$cfg" > "$cfg/log-sources.conf"
+  printf 'test\n' > "$cfg/test.log"
+
+  run_one triage "$ROOT/bin/opsforge" linux triage --output "$LINUX_FEASIBILITY_ROOT"
+  run_one persistence "$ROOT/bin/opsforge" linux persistence --output "$LINUX_FEASIBILITY_ROOT"
+  run_one deleted "$ROOT/bin/opsforge" linux deleted-binaries --output "$LINUX_FEASIBILITY_ROOT"
+  run_one proc-tree "$ROOT/bin/opsforge" linux proc-tree --output "$LINUX_FEASIBILITY_ROOT"
+  run_one suid-baseline "$ROOT/bin/opsforge" linux suid --baseline --baseline-file "$cfg/suid-baseline.txt" --output "$LINUX_FEASIBILITY_ROOT"
+  run_one suid-check "$ROOT/bin/opsforge" linux suid --check --baseline-file "$cfg/suid-baseline.txt" --output "$LINUX_FEASIBILITY_ROOT"
+  run_one priv-surface "$ROOT/bin/opsforge" linux priv-surface --output "$LINUX_FEASIBILITY_ROOT"
+  run_one ssh-audit "$ROOT/bin/opsforge" linux ssh-audit --output "$LINUX_FEASIBILITY_ROOT"
+  run_one config-baseline "$ROOT/bin/opsforge" linux config-drift --baseline --baseline-dir "$cfg/config-baseline" --output "$LINUX_FEASIBILITY_ROOT"
+  run_one config-check "$ROOT/bin/opsforge" linux config-drift --check --baseline-dir "$cfg/config-baseline" --output "$LINUX_FEASIBILITY_ROOT"
+  run_one net-drift "$ROOT/bin/opsforge" linux net-drift --targets "$cfg/network-targets.conf" --output "$LINUX_FEASIBILITY_ROOT"
+  run_one tls "$ROOT/bin/opsforge" linux tls --targets "$cfg/tls-targets.conf" --output "$LINUX_FEASIBILITY_ROOT"
+  run_one firewall "$ROOT/bin/opsforge" linux firewall --output "$LINUX_FEASIBILITY_ROOT"
+  run_one disk-rca "$ROOT/bin/opsforge" linux disk-rca --output "$LINUX_FEASIBILITY_ROOT"
+  run_one log-silence "$ROOT/bin/opsforge" linux log-silence --config "$cfg/log-sources.conf" --output "$LINUX_FEASIBILITY_ROOT"
+  run_one timeline "$ROOT/bin/opsforge" linux timeline --since-hours 1 --output "$LINUX_FEASIBILITY_ROOT"
+  run_one web-triage "$ROOT/bin/opsforge" linux web-triage --output "$LINUX_FEASIBILITY_ROOT"
+
+  summaries="$(find "$LINUX_FEASIBILITY_ROOT" -maxdepth 2 -name summary.txt | wc -l)"
+  [ "$summaries" -ge 16 ] || fail "expected at least 16 summary files, got $summaries"
+  say "linux feasibility summaries=$summaries"
+  say "linux feasibility evidence: $LINUX_FEASIBILITY_ROOT"
+}
+
+case "${1:-}" in
+  syntax) test_syntax ;;
+  help) test_help ;;
+  shellcheck) test_shellcheck ;;
+  linux-fixtures) test_linux_fixtures ;;
+  linux-feasibility) test_linux_feasibility ;;
+  all)
+    test_syntax
+    test_help
+    test_shellcheck
+    test_linux_fixtures
+    test_linux_feasibility
+    ;;
+  -h|--help) usage ;;
+  *) usage; exit 2 ;;
+esac

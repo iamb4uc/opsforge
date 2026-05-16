@@ -17,31 +17,27 @@ jobs:
 
       - name: bash syntax
         shell: bash
-        run: |
-          set -euo pipefail
-          while IFS= read -r file; do
-            bash -n "$file"
-          done < <(find bin lib scripts -type f \( -name '*.sh' -o -name opsforge \) | sort)
+        run: ./bin/test syntax
 
       - name: script help
         shell: bash
-        run: |
-          set -euo pipefail
-          while IFS= read -r file; do
-            "$file" --help >/dev/null
-          done < <(find scripts/linux -type f -name '*.sh' | sort)
-          ./bin/opsforge >/dev/null || test "$?" -eq 2
+        run: ./bin/test help
+
+      - name: fixture checks
+        shell: bash
+        run: ./bin/test linux-fixtures
 
       - name: shellcheck if available
         shell: bash
-        run: |
-          set -euo pipefail
-          if command -v shellcheck >/dev/null 2>&1; then
-            mapfile -t files < <(find bin lib scripts/linux -type f \( -name '*.sh' -o -name opsforge \) | sort)
-            shellcheck -S error "${files[@]}"
-          else
-            echo "shellcheck not installed on runner; skipping"
-          fi
+        run: ./bin/test shellcheck
+
+      - name: upload shell artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-shell-artifacts
+          path: .ci-artifacts/
+          if-no-files-found: ignore
 
   linux-feasibility:
     name: linux feasibility
@@ -60,48 +56,13 @@ jobs:
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             bash ca-certificates coreutils findutils gawk grep gzip iproute2 openssl procps sed tar util-linux \
             >/dev/null
-
-          root="$(mktemp -d)"
-          cfg="$(mktemp -d)"
-          printf 'localhost|127.0.0.1|1\n' > "$cfg/network-targets.conf"
-          printf 'localhost|127.0.0.1|1\n' > "$cfg/tls-targets.conf"
-          printf 'tmp-log|%s/test.log|critical|1440\n' "$cfg" > "$cfg/log-sources.conf"
-          printf 'test\n' > "$cfg/test.log"
-
-          run_one() {
-            name="$1"
-            shift
-            echo "::group::$name"
-            log="$root/$name.log"
-            if ! timeout 180 "$@" >"$log" 2>&1; then
-              echo "::endgroup::"
-              echo "::error::$name failed"
-              cat "$log"
-              return 1
-            fi
-            cat "$log"
-            echo "::endgroup::"
-          }
-
-          run_one triage ./bin/opsforge linux triage --output "$root"
-          run_one persistence ./bin/opsforge linux persistence --output "$root"
-          run_one deleted ./bin/opsforge linux deleted-binaries --output "$root"
-          run_one proc-tree ./bin/opsforge linux proc-tree --output "$root"
-          run_one suid-baseline ./bin/opsforge linux suid --baseline --baseline-file "$cfg/suid-baseline.txt" --output "$root"
-          run_one suid-check ./bin/opsforge linux suid --check --baseline-file "$cfg/suid-baseline.txt" --output "$root"
-          run_one priv-surface ./bin/opsforge linux priv-surface --output "$root"
-          run_one ssh-audit ./bin/opsforge linux ssh-audit --output "$root"
-          run_one config-baseline ./bin/opsforge linux config-drift --baseline --baseline-dir "$cfg/config-baseline" --output "$root"
-          run_one config-check ./bin/opsforge linux config-drift --check --baseline-dir "$cfg/config-baseline" --output "$root"
-          run_one net-drift ./bin/opsforge linux net-drift --targets "$cfg/network-targets.conf" --output "$root"
-          run_one tls ./bin/opsforge linux tls --targets "$cfg/tls-targets.conf" --output "$root"
-          run_one firewall ./bin/opsforge linux firewall --output "$root"
-          run_one disk-rca ./bin/opsforge linux disk-rca --output "$root"
-          run_one log-silence ./bin/opsforge linux log-silence --config "$cfg/log-sources.conf" --output "$root"
-          run_one timeline ./bin/opsforge linux timeline --since-hours 1 --output "$root"
-          run_one web-triage ./bin/opsforge linux web-triage --output "$root"
-
-          summaries="$(find "$root" -maxdepth 2 -name summary.txt | wc -l)"
-          test "$summaries" -ge 16
-          echo "summaries=$summaries"
+          OPSFORGE_TEST_OUTPUT=/repo/.ci-artifacts ./bin/test linux-feasibility
           CONTAINER
+
+      - name: upload feasibility artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-feasibility-artifacts
+          path: .ci-artifacts/
+          if-no-files-found: ignore
