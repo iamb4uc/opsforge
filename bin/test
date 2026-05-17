@@ -13,6 +13,7 @@ Usage:
   bin/test shellcheck
   bin/test linux-fixtures
   bin/test linux-feasibility
+  bin/test output-contract
   bin/test all
 
 Runs local validation for opsforge. The tests are read-only against the host and
@@ -44,6 +45,17 @@ assert_file() {
   [ -f "$file" ] || fail "expected file was not created: $file"
 }
 
+assert_dir() {
+  local dir="$1"
+  [ -d "$dir" ] || fail "expected directory was not created: $dir"
+}
+
+assert_nonempty_file() {
+  local file="$1"
+  assert_file "$file"
+  [ -s "$file" ] || fail "expected file to be non-empty: $file"
+}
+
 assert_text() {
   local file="$1"
   local pattern="$2"
@@ -56,6 +68,82 @@ latest_output_dir() {
   find "$base" -mindepth 1 -maxdepth 1 -type d -name "*-$match-*" -printf '%T@ %p\n' |
     sort -n |
     awk 'END {print $2}'
+}
+
+finding_count() {
+  local file="$1"
+  { grep -o '"id":"[^"]*"' "$file" 2>/dev/null || true; } | wc -l
+}
+
+validate_findings_json() {
+  local file="$1"
+  local ids titles severities hosts categories evidence recommendations bad_severity
+  assert_nonempty_file "$file"
+
+  awk '
+    BEGIN {ok=1}
+    NR == 1 && $0 !~ /^\[/ {ok=0}
+    {last=$0}
+    END {if (last !~ /^\]$/) ok=0; exit ok ? 0 : 1}
+  ' "$file" || fail "findings file is not a simple JSON array: $file"
+
+  ids="$({ grep -o '"id":"[^"]*"' "$file" 2>/dev/null || true; } | wc -l)"
+  [ "$ids" -eq 0 ] && return 0
+
+  titles="$({ grep -o '"title":"[^"]*"' "$file" 2>/dev/null || true; } | wc -l)"
+  severities="$({ grep -o '"severity":"[^"]*"' "$file" 2>/dev/null || true; } | wc -l)"
+  hosts="$({ grep -o '"host":"[^"]*"' "$file" 2>/dev/null || true; } | wc -l)"
+  categories="$({ grep -o '"category":"[^"]*"' "$file" 2>/dev/null || true; } | wc -l)"
+  evidence="$({ grep -o '"evidence":"[^"]*"' "$file" 2>/dev/null || true; } | wc -l)"
+  recommendations="$({ grep -o '"recommendation":"[^"]*"' "$file" 2>/dev/null || true; } | wc -l)"
+
+  [ "$titles" -eq "$ids" ] || fail "finding title count does not match id count in $file"
+  [ "$severities" -eq "$ids" ] || fail "finding severity count does not match id count in $file"
+  [ "$hosts" -eq "$ids" ] || fail "finding host count does not match id count in $file"
+  [ "$categories" -eq "$ids" ] || fail "finding category count does not match id count in $file"
+  [ "$evidence" -eq "$ids" ] || fail "finding evidence count does not match id count in $file"
+  [ "$recommendations" -eq "$ids" ] || fail "finding recommendation count does not match id count in $file"
+
+  bad_severity="$({ grep -o '"severity":"[^"]*"' "$file" || true; } |
+    awk -F '"' '$4 !~ /^(critical|high|medium|low|info)$/ {print $4; bad=1} END {exit bad ? 0 : 1}' || true)"
+  [ -z "$bad_severity" ] || fail "invalid finding severity in $file: $bad_severity"
+}
+
+assert_output_contract() {
+  local out_dir="$1"
+  local root_findings normalized_findings summary_count summary_value actual_count
+
+  assert_dir "$out_dir/raw"
+  assert_dir "$out_dir/normalized"
+  assert_nonempty_file "$out_dir/report.md"
+  assert_nonempty_file "$out_dir/findings.json"
+  assert_nonempty_file "$out_dir/summary.txt"
+
+  root_findings="$out_dir/findings.json"
+  normalized_findings="$out_dir/normalized/findings.json"
+  assert_file "$normalized_findings"
+  cmp -s "$root_findings" "$normalized_findings" || fail "normalized findings differ from root findings: $out_dir"
+  validate_findings_json "$root_findings"
+
+  assert_text "$out_dir/summary.txt" "Output: $out_dir"
+  assert_text "$out_dir/summary.txt" "Findings:"
+  summary_count="$(awk -F ': ' '$1 == "Findings" {print $2; found=1} END {exit found ? 0 : 1}' "$out_dir/summary.txt")" ||
+    fail "summary is missing finding count: $out_dir/summary.txt"
+  actual_count="$(finding_count "$root_findings")"
+  summary_value="${summary_count%%[!0-9]*}"
+  [ -n "$summary_value" ] || fail "summary finding count is not numeric: $out_dir/summary.txt"
+  [ "$summary_value" -eq "$actual_count" ] || fail "summary finding count $summary_value does not match JSON count $actual_count: $out_dir"
+}
+
+assert_contracts_under() {
+  local base="$1"
+  local count=0
+  while IFS= read -r findings; do
+    assert_output_contract "$(dirname "$findings")"
+    count=$((count + 1))
+  done < <(find "$base" -mindepth 2 -maxdepth 2 -name findings.json | sort)
+  [ "$count" -gt 0 ] || fail "no script output directories found under $base"
+  say "validated output contracts=$count"
 }
 
 test_syntax() {
@@ -100,22 +188,25 @@ test_linux_fixtures() {
   assert_file "$persistence_dir/findings.json"
   assert_text "$persistence_dir/findings.json" "LINUX-PERSISTENCE"
   assert_text "$persistence_dir/report.md" "Suspicious Matches"
+  assert_output_contract "$persistence_dir"
 
   log_file="$run_dir/logs/app.log"
   silence_cfg="$run_dir/log-sources.conf"
   printf 'fixture-app|%s|critical|1440\n' "$log_file" > "$silence_cfg"
   "$ROOT/bin/opsforge" linux log-silence --config "$silence_cfg" --output "$run_dir" --quiet
-  assert_file "$(latest_output_dir "$run_dir" log-source-silence-detector)/summary.txt"
+  assert_output_contract "$(latest_output_dir "$run_dir" log-source-silence-detector)"
 
   net_cfg="$run_dir/network-targets.conf"
   cp "$fixture_dir/network-targets.conf" "$net_cfg"
   "$ROOT/bin/opsforge" linux net-drift --targets "$net_cfg" --output "$run_dir" --quiet
   assert_text "$(latest_output_dir "$run_dir" network-path-drift)/findings.json" "LINUX-NETPATH-TCP"
+  assert_output_contract "$(latest_output_dir "$run_dir" network-path-drift)"
 
   tls_cfg="$run_dir/tls-targets.conf"
   cp "$fixture_dir/tls-targets.conf" "$tls_cfg"
   "$ROOT/bin/opsforge" linux tls --targets "$tls_cfg" --output "$run_dir" --quiet
   assert_text "$(latest_output_dir "$run_dir" tls-inventory-scanner)/findings.json" "TLS-"
+  assert_output_contract "$(latest_output_dir "$run_dir" tls-inventory-scanner)"
 
   say "fixture evidence: $run_dir"
 }
@@ -167,8 +258,15 @@ test_linux_feasibility() {
 
   summaries="$(find "$LINUX_FEASIBILITY_ROOT" -maxdepth 2 -name summary.txt | wc -l)"
   [ "$summaries" -ge 16 ] || fail "expected at least 16 summary files, got $summaries"
+  assert_contracts_under "$LINUX_FEASIBILITY_ROOT"
   say "linux feasibility summaries=$summaries"
   say "linux feasibility evidence: $LINUX_FEASIBILITY_ROOT"
+}
+
+test_output_contract() {
+  say "running output contract tests"
+  test_linux_fixtures
+  test_linux_feasibility
 }
 
 case "${1:-}" in
@@ -177,6 +275,7 @@ case "${1:-}" in
   shellcheck) test_shellcheck ;;
   linux-fixtures) test_linux_fixtures ;;
   linux-feasibility) test_linux_feasibility ;;
+  output-contract) test_output_contract ;;
   all)
     test_syntax
     test_help
