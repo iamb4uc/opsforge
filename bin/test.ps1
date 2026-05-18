@@ -141,7 +141,8 @@ function Invoke-SafeRuntimeCheck {
     )
     Write-Host "::group::$Name"
     try {
-        & (Join-Path $Root 'bin\opsforge.ps1') @Arguments -OutputPath $OutputRoot -Quiet
+        $wrapperArgs = @($Arguments) + @('-OutputPath', $OutputRoot, '-Quiet')
+        & (Join-Path $Root 'bin\opsforge.ps1') @wrapperArgs
         if ($LASTEXITCODE -ne $null -and $LASTEXITCODE -ne 0) { Fail-Test "$Name exited with $LASTEXITCODE" }
         $outDir = Get-LatestOutputDirectory -Base $OutputRoot -ScriptName $ScriptName
         if (-not $outDir) { Fail-Test "$Name did not create output" }
