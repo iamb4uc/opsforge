@@ -29,6 +29,17 @@ function Get-TaskTriggerName {
     return $Trigger.GetType().Name
 }
 
+function Get-TaskActionText {
+    param([object]$Action)
+    if ($null -eq $Action) { return '' }
+    $execute = ''
+    $arguments = ''
+    if ($Action.PSObject.Properties.Name -contains 'Execute') { $execute = [string]$Action.Execute }
+    if ($Action.PSObject.Properties.Name -contains 'Arguments') { $arguments = [string]$Action.Arguments }
+    if ($execute -or $arguments) { return "$execute $arguments".Trim() }
+    return $Action.GetType().Name
+}
+
 $tasks = Get-ScheduledTask | ForEach-Object {
     $info = $null
     try { $info = Get-ScheduledTaskInfo -TaskName $_.TaskName -TaskPath $_.TaskPath -ErrorAction Stop } catch { }
@@ -39,7 +50,7 @@ $tasks = Get-ScheduledTask | ForEach-Object {
         UserId = $_.Principal.UserId
         RunLevel = $_.Principal.RunLevel
         Hidden = $_.Settings.Hidden
-        Actions = ($_.Actions | ForEach-Object { "$($_.Execute) $($_.Arguments)" }) -join '; '
+        Actions = ($_.Actions | ForEach-Object { Get-TaskActionText $_ }) -join '; '
         Triggers = ($_.Triggers | ForEach-Object { Get-TaskTriggerName $_ }) -join '; '
         LastRunTime = if ($info) { $info.LastRunTime } else { $null }
         NextRunTime = if ($info) { $info.NextRunTime } else { $null }
