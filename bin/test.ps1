@@ -48,6 +48,7 @@ function New-TestRunDirectory {
 function Get-FindingCount {
     param([string]$Path)
     $json = Get-Content -Raw -Path $Path | ConvertFrom-Json
+    if ($null -eq $json) { return 0 }
     return @($json).Count
 }
 
@@ -70,6 +71,7 @@ function Test-OutputContract {
     if ($rootFindings -ne $normalizedFindings) { Fail-Test "normalized findings differ: $OutputDirectory" }
 
     $findings = $rootFindings | ConvertFrom-Json
+    if ($null -eq $findings) { $findings = @() }
     foreach ($finding in @($findings)) {
         foreach ($key in @('id','title','severity','host','category','evidence','recommendation')) {
             if (-not ($finding.PSObject.Properties.Name -contains $key)) { Fail-Test "finding missing ${key}: $OutputDirectory" }
