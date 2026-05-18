@@ -90,12 +90,35 @@ finalize_findings_json() {
 safe_run() {
   local outfile="$1"
   shift
+  local out_dir status_file started_at ended_at exit_code status command_text
+  out_dir="$(cd "$(dirname "$outfile")/.." && pwd)"
+  status_file="$out_dir/normalized/collection-status.tsv"
+  started_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  command_text="$(printf '%s ' "$@")"
+  command_text="${command_text% }"
   {
     printf '$'
     printf ' %s' "$@"
     printf '\n\n'
-    "$@" 2>&1 || true
+    set +e
+    "$@" 2>&1
+    exit_code="$?"
+    set -e
   } > "$outfile"
+  ended_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  status="ok"
+  [ "$exit_code" -eq 0 ] || status="failed"
+  if [ ! -s "$status_file" ]; then
+    printf 'command\toutput_file\texit_code\tstatus\tstarted_at\tended_at\n' > "$status_file"
+  fi
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$(printf '%s' "$command_text" | tr '\t\n' '  ')" \
+    "${outfile#$out_dir/}" \
+    "$exit_code" \
+    "$status" \
+    "$started_at" \
+    "$ended_at" >> "$status_file"
+  return 0
 }
 
 command_exists() {

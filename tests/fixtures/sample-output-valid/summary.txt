@@ -1,0 +1,3 @@
+Fixture triage
+Output: tests/fixtures/sample-output-valid
+Findings: 1

@@ -23,6 +23,22 @@ jobs:
         shell: bash
         run: ./bin/test help
 
+      - name: wrapper targets
+        shell: bash
+        run: ./bin/test wrapper-targets
+
+      - name: script catalog
+        shell: bash
+        run: ./bin/test script-catalog
+
+      - name: forbidden language files
+        shell: bash
+        run: ./bin/test forbidden-files
+
+      - name: sample output contract
+        shell: bash
+        run: ./bin/test sample-output
+
       - name: fixture checks
         shell: bash
         run: ./bin/test linux-fixtures
