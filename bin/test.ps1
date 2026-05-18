@@ -137,14 +137,13 @@ function Test-WrapperTargets {
 function Invoke-SafeRuntimeCheck {
     param(
         [string]$Name,
-        [string[]]$Arguments,
+        [string]$ScriptPath,
         [string]$ScriptName,
         [string]$OutputRoot
     )
     Write-Host "::group::$Name"
     try {
-        $wrapperArgs = @($Arguments) + @('-OutputPath', $OutputRoot, '-Quiet')
-        & (Join-Path $Root 'bin\opsforge.ps1') @wrapperArgs
+        & (Join-Path $Root $ScriptPath) -OutputPath $OutputRoot -Quiet
         if ($LASTEXITCODE -ne $null -and $LASTEXITCODE -ne 0) { Fail-Test "$Name exited with $LASTEXITCODE" }
         $outDir = Get-LatestOutputDirectory -Base $OutputRoot -ScriptName $ScriptName
         if (-not $outDir) { Fail-Test "$Name did not create output" }
@@ -157,9 +156,9 @@ function Invoke-SafeRuntimeCheck {
 function Test-Runtime {
     Write-TestLine 'running safe windows runtime checks'
     $outputRoot = New-TestRunDirectory -Name 'windows-runtime'
-    Invoke-SafeRuntimeCheck -Name 'network' -Arguments @('windows','network') -ScriptName 'Get-WinNetworkExposure' -OutputRoot $outputRoot
-    Invoke-SafeRuntimeCheck -Name 'tasks' -Arguments @('windows','tasks') -ScriptName 'Test-WinScheduledTasks' -OutputRoot $outputRoot
-    Invoke-SafeRuntimeCheck -Name 'services' -Arguments @('windows','services') -ScriptName 'Test-WinServiceAnomaly' -OutputRoot $outputRoot
+    Invoke-SafeRuntimeCheck -Name 'network' -ScriptPath 'scripts\windows\network\Get-WinNetworkExposure.ps1' -ScriptName 'Get-WinNetworkExposure' -OutputRoot $outputRoot
+    Invoke-SafeRuntimeCheck -Name 'tasks' -ScriptPath 'scripts\windows\persistence\Test-WinScheduledTasks.ps1' -ScriptName 'Test-WinScheduledTasks' -OutputRoot $outputRoot
+    Invoke-SafeRuntimeCheck -Name 'services' -ScriptPath 'scripts\windows\endpoint\Test-WinServiceAnomaly.ps1' -ScriptName 'Test-WinServiceAnomaly' -OutputRoot $outputRoot
     Write-TestLine "windows runtime evidence: $outputRoot"
 }
 
