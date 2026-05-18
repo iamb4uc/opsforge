@@ -17,57 +17,15 @@ jobs:
 
       - name: parser check
         shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $files = Get-ChildItem -Path bin,lib,scripts -Recurse -File -Include *.ps1
-          $failed = $false
-          foreach ($file in $files) {
-            $tokens = $null
-            $errors = $null
-            [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$errors) | Out-Null
-            if ($errors.Count -gt 0) {
-              $failed = $true
-              foreach ($errorRecord in $errors) {
-                $line = $errorRecord.Extent.StartLineNumber
-                $column = $errorRecord.Extent.StartColumnNumber
-                Write-Host ("{0}:{1}:{2}: {3}" -f $file.FullName, $line, $column, $errorRecord.Message)
-                Write-Host ("::error file={0},line={1},col={2}::{3}" -f $file.FullName, $line, $column, $errorRecord.Message)
-              }
-            }
-          }
-          if ($failed) {
-            throw "PowerShell parser validation failed"
-          }
+        run: .\bin\test.ps1 parser
 
       - name: wrapper command map
-        shell: powershell
-        run: |
-          $ErrorActionPreference = "Stop"
-          $wrapper = Get-Content -Raw -Path .\bin\opsforge.ps1
-          $paths = [regex]::Matches($wrapper, "Join-Path \$Root '([^']+)'") | ForEach-Object { $_.Groups[1].Value }
-          foreach ($path in $paths) {
-            if (-not (Test-Path $path)) {
-              throw "wrapper references missing script: $path"
-            }
-          }
+        shell: pwsh
+        run: .\bin\test.ps1 wrapper-targets
 
       - name: basic PowerShell help safety
         shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $files = Get-ChildItem -Path .\scripts\windows -Recurse -File -Filter *.ps1
-          foreach ($file in $files) {
-            $content = Get-Content -Raw -Path $file.FullName
-            if ($content -notmatch '\[CmdletBinding\(\)\]') {
-              throw "missing CmdletBinding block: $($file.FullName)"
-            }
-            if ($content -notmatch '\[string\]\$OutputPath') {
-              throw "missing OutputPath parameter: $($file.FullName)"
-            }
-            if ($content -notmatch '\[switch\]\$Quiet') {
-              throw "missing Quiet parameter: $($file.FullName)"
-            }
-          }
+        run: .\bin\test.ps1 static
 
       - name: command availability
         shell: powershell
@@ -114,3 +72,15 @@ jobs:
           } else {
             Write-Host "Pester not installed on runner; skipping"
           }
+
+      - name: safe runtime checks
+        shell: pwsh
+        run: .\bin\test.ps1 runtime
+
+      - name: upload windows artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-runtime-artifacts
+          path: .ci-artifacts/
+          if-no-files-found: ignore
