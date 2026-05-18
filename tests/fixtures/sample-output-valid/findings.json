@@ -1,0 +1,3 @@
+[
+  {"id":"FIXTURE-001","title":"Fixture finding for output validation","severity":"medium","host":"server01","category":"fixture","evidence":"raw/example.txt","recommendation":"Use this fixture only for contract validation."}
+]

@@ -1,0 +1,2 @@
+source	status	notes
+hostname	ok	collected from fixture

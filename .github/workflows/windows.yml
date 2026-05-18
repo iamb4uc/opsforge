@@ -51,6 +51,24 @@ jobs:
             }
           }
 
+      - name: basic PowerShell help safety
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $files = Get-ChildItem -Path .\scripts\windows -Recurse -File -Filter *.ps1
+          foreach ($file in $files) {
+            $content = Get-Content -Raw -Path $file.FullName
+            if ($content -notmatch '\[CmdletBinding\(\)\]') {
+              throw "missing CmdletBinding block: $($file.FullName)"
+            }
+            if ($content -notmatch '\[string\]\$OutputPath') {
+              throw "missing OutputPath parameter: $($file.FullName)"
+            }
+            if ($content -notmatch '\[switch\]\$Quiet') {
+              throw "missing Quiet parameter: $($file.FullName)"
+            }
+          }
+
       - name: command availability
         shell: powershell
         run: |

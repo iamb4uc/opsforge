@@ -19,6 +19,15 @@ This repository avoids beginner-level recon wrappers and noisy toy scripts.
 Every script should produce useful evidence, structured findings, and a readable
 report that can help during real investigations.
 
+## Maturity
+
+opsforge is under active development. Treat the current script set as beta unless
+a script's documentation says otherwise.
+
+- Stable: shared output contract, command wrappers, Linux CI syntax/help checks.
+- Beta: Linux collection and audit scripts covered by Docker feasibility checks.
+- Experimental: Windows runtime behavior outside parser and structural CI checks.
+
 ## Runtime Policy
 
 - Linux/Unix: POSIX sh where possible, Bash where needed.
@@ -78,3 +87,41 @@ output/HOSTNAME-scriptname-YYYYMMDD-HHMMSS/
 
 `findings.json` uses a stable schema with `id`, `title`, `severity`, `host`,
 `category`, `evidence`, and `recommendation`.
+
+Validate any generated output directory with:
+
+```bash
+./bin/validate-output-contract output/HOSTNAME-scriptname-YYYYMMDD-HHMMSS
+```
+
+## Testing
+
+Local Linux checks:
+
+```bash
+./bin/test syntax
+./bin/test help
+./bin/test sample-output
+./bin/test linux-fixtures
+```
+
+Full Linux feasibility checks are designed to run in Docker:
+
+```bash
+docker run -i --rm -v "$PWD:/repo" -w /repo ubuntu:24.04 bash -s <<'CONTAINER'
+set -euo pipefail
+apt-get update >/dev/null
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+  bash ca-certificates coreutils findutils gawk grep gzip iproute2 openssl procps sed tar util-linux \
+  >/dev/null
+OPSFORGE_TEST_OUTPUT=/repo/.ci-artifacts ./bin/test linux-feasibility
+CONTAINER
+```
+
+## Documentation
+
+- Script catalog: `docs/script-catalog.md`
+- Output format: `docs/output-format.md`
+- Report standard: `docs/report-standard.md`
+- Script metadata: `docs/script-metadata.md`
+- Compatibility: `docs/compatibility.md`

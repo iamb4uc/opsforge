@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+IFS=$'\n\t'
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  validate-output-contract OUTPUT_DIR [...]
+
+Validate opsforge output directories. The validator uses jq when available, but
+keeps a shell-only fallback so CI and incident hosts do not need extra tooling.
+USAGE
+}
+
+fail() {
+  printf 'validate-output-contract: ERROR: %s\n' "$*" >&2
+  exit 1
+}
+
+assert_dir() {
+  local dir="$1"
+  [ -d "$dir" ] || fail "missing directory: $dir"
+}
+
+assert_file() {
+  local file="$1"
+  [ -f "$file" ] || fail "missing file: $file"
+}
+
+assert_nonempty_file() {
+  local file="$1"
+  assert_file "$file"
+  [ -s "$file" ] || fail "empty file: $file"
+}
+
+field_count() {
+  local file="$1"
+  local field="$2"
+  { grep -o "\"$field\":\"[^\"]*\"" "$file" 2>/dev/null || true; } | wc -l
+}
+
+finding_count() {
+  field_count "$1" "id"
+}
+
+validate_with_jq() {
+  local file="$1"
+  jq -e '
+    type == "array" and
+    all(.[]; (
+      has("id") and has("title") and has("severity") and has("host") and
+      has("category") and has("evidence") and has("recommendation") and
+      (.severity | IN("critical", "high", "medium", "low", "info"))
+    ))
+  ' "$file" >/dev/null
+}
+
+validate_with_shell() {
+  local file="$1"
+  local ids titles severities hosts categories evidence recommendations bad_severity
+
+  awk '
+    BEGIN {ok=1}
+    NR == 1 && $0 !~ /^\[/ {ok=0}
+    {last=$0}
+    END {if (last !~ /^\]$/) ok=0; exit ok ? 0 : 1}
+  ' "$file" || fail "findings.json is not a simple JSON array: $file"
+
+  ids="$(finding_count "$file")"
+  [ "$ids" -eq 0 ] && return 0
+
+  titles="$(field_count "$file" "title")"
+  severities="$(field_count "$file" "severity")"
+  hosts="$(field_count "$file" "host")"
+  categories="$(field_count "$file" "category")"
+  evidence="$(field_count "$file" "evidence")"
+  recommendations="$(field_count "$file" "recommendation")"
+
+  [ "$titles" -eq "$ids" ] || fail "title count does not match id count in $file"
+  [ "$severities" -eq "$ids" ] || fail "severity count does not match id count in $file"
+  [ "$hosts" -eq "$ids" ] || fail "host count does not match id count in $file"
+  [ "$categories" -eq "$ids" ] || fail "category count does not match id count in $file"
+  [ "$evidence" -eq "$ids" ] || fail "evidence count does not match id count in $file"
+  [ "$recommendations" -eq "$ids" ] || fail "recommendation count does not match id count in $file"
+
+  bad_severity="$({ grep -o '"severity":"[^"]*"' "$file" || true; } |
+    awk -F '"' '$4 !~ /^(critical|high|medium|low|info)$/ {print $4; bad=1} END {exit bad ? 0 : 1}' || true)"
+  [ -z "$bad_severity" ] || fail "invalid severity in $file: $bad_severity"
+}
+
+validate_findings() {
+  local file="$1"
+  assert_nonempty_file "$file"
+  if command -v jq >/dev/null 2>&1; then
+    validate_with_jq "$file" || fail "jq validation failed for $file"
+  else
+    validate_with_shell "$file"
+  fi
+}
+
+validate_summary_count() {
+  local out_dir="$1"
+  local summary_count actual_count summary_value
+  grep -F 'Output:' "$out_dir/summary.txt" >/dev/null ||
+    fail "summary.txt is missing Output line: $out_dir"
+  grep -F 'Findings:' "$out_dir/summary.txt" >/dev/null ||
+    fail "summary.txt is missing Findings line: $out_dir"
+  summary_count="$(awk -F ': ' '$1 == "Findings" {print $2; found=1} END {exit found ? 0 : 1}' "$out_dir/summary.txt")" ||
+    fail "summary.txt has no parseable Findings value: $out_dir"
+  actual_count="$(finding_count "$out_dir/findings.json")"
+  summary_value="${summary_count%%[!0-9]*}"
+  [ -n "$summary_value" ] || fail "summary Findings value is not numeric: $out_dir"
+  [ "$summary_value" -eq "$actual_count" ] ||
+    fail "summary Findings value $summary_value does not match findings.json count $actual_count: $out_dir"
+}
+
+validate_output_dir() {
+  local out_dir="$1"
+  assert_dir "$out_dir"
+  assert_dir "$out_dir/raw"
+  assert_dir "$out_dir/normalized"
+  assert_nonempty_file "$out_dir/report.md"
+  assert_nonempty_file "$out_dir/findings.json"
+  assert_nonempty_file "$out_dir/summary.txt"
+  assert_file "$out_dir/normalized/findings.json"
+  cmp -s "$out_dir/findings.json" "$out_dir/normalized/findings.json" ||
+    fail "normalized/findings.json differs from root findings.json: $out_dir"
+  validate_findings "$out_dir/findings.json"
+  validate_summary_count "$out_dir"
+}
+
+[ "$#" -gt 0 ] || { usage; exit 2; }
+
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+esac
+
+for output_dir in "$@"; do
+  validate_output_dir "$output_dir"
+  printf 'ok\t%s\n' "$output_dir"
+done
