@@ -84,3 +84,4 @@ jobs:
           name: windows-runtime-artifacts
           path: .ci-artifacts/
           if-no-files-found: ignore
+          include-hidden-files: true

@@ -144,7 +144,8 @@ function Invoke-SafeRuntimeCheck {
     Write-Host "::group::$Name"
     try {
         & (Join-Path $Root $ScriptPath) -OutputPath $OutputRoot -Quiet
-        if ($LASTEXITCODE -ne $null -and $LASTEXITCODE -ne 0) { Fail-Test "$Name exited with $LASTEXITCODE" }
+        $exitCode = Get-Variable -Name LASTEXITCODE -ValueOnly -ErrorAction SilentlyContinue
+        if ($null -ne $exitCode -and $exitCode -ne 0) { Fail-Test "$Name exited with $exitCode" }
         $outDir = Get-LatestOutputDirectory -Base $OutputRoot -ScriptName $ScriptName
         if (-not $outDir) { Fail-Test "$Name did not create output" }
         Test-OutputContract -OutputDirectory $outDir
