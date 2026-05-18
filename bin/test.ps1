@@ -125,7 +125,7 @@ function Test-Static {
 function Test-WrapperTargets {
     Write-TestLine 'checking powershell wrapper targets'
     $wrapper = Get-Content -Raw -Path (Join-Path $Root 'bin\opsforge.ps1')
-    $paths = [regex]::Matches($wrapper, "Join-Path \$Root '([^']+)'") | ForEach-Object { $_.Groups[1].Value }
+    $paths = [regex]::Matches($wrapper, 'Join-Path \$Root ''([^'']+)''') | ForEach-Object { $_.Groups[1].Value }
     foreach ($path in $paths) {
         $target = Join-Path $Root $path
         if (-not (Test-Path $target)) { Fail-Test "wrapper references missing script: $path" }
