@@ -23,7 +23,7 @@ and degrade clearly when optional commands are missing.
 
 | Platform | Status | Notes |
 |---|---|---|
-| GitHub Windows latest runner | parser tested | PowerShell parser, wrapper paths, command availability, and Pester structural checks run in CI. |
+| GitHub Windows latest runner | CI runtime tested | Parser, wrapper paths, command availability, Pester structural checks, and safe runtime checks run in CI. |
 | Windows 10 | planned/manual testing | Runtime validation needed on real hosts. |
 | Windows 11 | planned/manual testing | Runtime validation needed on real hosts. |
 | Windows Server | planned/manual testing | Runtime validation needed on domain and standalone hosts. |
@@ -47,5 +47,8 @@ script help and metadata. Examples include `journalctl`, `systemctl`, `ss`,
   hosts.
 - Some Linux distributions lack systemd, journalctl, or GNU-specific `find`
   features.
+- Windows CI uses GitHub-hosted Server 2025 runners. It proves parser,
+  wrapper, command availability, and selected runtime behavior, not every
+  enterprise audit-policy shape.
 - Windows security telemetry varies by audit policy, edition, EDR configuration,
   and PowerShell logging policy.
