@@ -24,9 +24,10 @@ report that can help during real investigations.
 opsforge is under active development. Treat the current script set as beta unless
 a script's documentation says otherwise.
 
-- Stable: shared output contract, command wrappers, Linux CI syntax/help checks.
+- Stable: shared output contract, command wrappers, script inventory checks.
 - Beta: Linux collection and audit scripts covered by Docker feasibility checks.
-- Experimental: Windows runtime behavior outside parser and structural CI checks.
+- Beta: selected Windows scripts covered by CI runtime checks on GitHub's Windows runner.
+- Experimental: Windows scripts that are parser-tested but not runtime-tested in CI yet.
 
 ## Runtime Policy
 
@@ -105,6 +106,15 @@ Local Linux checks:
 ./bin/test linux-fixtures
 ```
 
+Windows checks:
+
+```powershell
+.\bin\test.ps1 parser
+.\bin\test.ps1 static
+.\bin\test.ps1 wrapper-targets
+.\bin\test.ps1 runtime
+```
+
 Full Linux feasibility checks are designed to run in Docker:
 
 ```bash
@@ -125,3 +135,4 @@ CONTAINER
 - Report standard: `docs/report-standard.md`
 - Script metadata: `docs/script-metadata.md`
 - Compatibility: `docs/compatibility.md`
+- Testing: `docs/testing.md`
