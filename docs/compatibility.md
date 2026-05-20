@@ -49,6 +49,6 @@ script help and metadata. Examples include `journalctl`, `systemctl`, `ss`,
   features.
 - Windows CI uses GitHub-hosted Server 2025 runners. It proves parser,
   wrapper, command availability, and selected runtime behavior, not every
-  enterprise audit-policy shape.
+  real audit-policy setup.
 - Windows security telemetry varies by audit policy, edition, EDR configuration,
   and PowerShell logging policy.

@@ -13,24 +13,32 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $Root = Resolve-Path (Join-Path $PSScriptRoot '..')
-$ScriptArgs = @()
-if ($OutputPath) { $ScriptArgs += @('-OutputPath', $OutputPath) }
-if ($Json) { $ScriptArgs += '-Json' }
-if ($Markdown) { $ScriptArgs += '-Markdown' }
-if ($Quiet) { $ScriptArgs += '-Quiet' }
-if ($RemainingArgs) { $ScriptArgs += $RemainingArgs }
+$ScriptArgs = @{}
+if ($OutputPath) { $ScriptArgs.OutputPath = $OutputPath }
+if ($Json) { $ScriptArgs.Json = $true }
+if ($Markdown) { $ScriptArgs.Markdown = $true }
+if ($Quiet) { $ScriptArgs.Quiet = $true }
+
+function Invoke-OpsForgeScript {
+    param([string]$Path)
+    if ($RemainingArgs) {
+        & $Path @ScriptArgs @RemainingArgs
+    } else {
+        & $Path @ScriptArgs
+    }
+}
 
 switch ("$Platform`:$Command") {
-    'windows:triage' { & (Join-Path $Root 'scripts\windows\endpoint\Invoke-WinTriage.ps1') @ScriptArgs; break }
-    'windows:persistence' { & (Join-Path $Root 'scripts\windows\persistence\Find-WinPersistence.ps1') @ScriptArgs; break }
-    'windows:services' { & (Join-Path $Root 'scripts\windows\endpoint\Test-WinServiceAnomaly.ps1') @ScriptArgs; break }
-    'windows:tasks' { & (Join-Path $Root 'scripts\windows\persistence\Test-WinScheduledTasks.ps1') @ScriptArgs; break }
-    'windows:network' { & (Join-Path $Root 'scripts\windows\network\Get-WinNetworkExposure.ps1') @ScriptArgs; break }
-    'windows:firewall' { & (Join-Path $Root 'scripts\windows\network\Test-WinFirewallExposure.ps1') @ScriptArgs; break }
-    'windows:defender' { & (Join-Path $Root 'scripts\windows\hardening\Test-WinDefenderStatus.ps1') @ScriptArgs; break }
-    'windows:privilege' { & (Join-Path $Root 'scripts\windows\hardening\Test-WinPrivilegeSurface.ps1') @ScriptArgs; break }
-    'windows:timeline' { & (Join-Path $Root 'scripts\windows\forensic\New-WinEventTimeline.ps1') @ScriptArgs; break }
-    'windows:log-tampering' { & (Join-Path $Root 'scripts\windows\forensic\Test-WinLogTampering.ps1') @ScriptArgs; break }
+    'windows:triage' { Invoke-OpsForgeScript (Join-Path $Root 'scripts\windows\endpoint\Invoke-WinTriage.ps1'); break }
+    'windows:persistence' { Invoke-OpsForgeScript (Join-Path $Root 'scripts\windows\persistence\Find-WinPersistence.ps1'); break }
+    'windows:services' { Invoke-OpsForgeScript (Join-Path $Root 'scripts\windows\endpoint\Test-WinServiceAnomaly.ps1'); break }
+    'windows:tasks' { Invoke-OpsForgeScript (Join-Path $Root 'scripts\windows\persistence\Test-WinScheduledTasks.ps1'); break }
+    'windows:network' { Invoke-OpsForgeScript (Join-Path $Root 'scripts\windows\network\Get-WinNetworkExposure.ps1'); break }
+    'windows:firewall' { Invoke-OpsForgeScript (Join-Path $Root 'scripts\windows\network\Test-WinFirewallExposure.ps1'); break }
+    'windows:defender' { Invoke-OpsForgeScript (Join-Path $Root 'scripts\windows\hardening\Test-WinDefenderStatus.ps1'); break }
+    'windows:privilege' { Invoke-OpsForgeScript (Join-Path $Root 'scripts\windows\hardening\Test-WinPrivilegeSurface.ps1'); break }
+    'windows:timeline' { Invoke-OpsForgeScript (Join-Path $Root 'scripts\windows\forensic\New-WinEventTimeline.ps1'); break }
+    'windows:log-tampering' { Invoke-OpsForgeScript (Join-Path $Root 'scripts\windows\forensic\Test-WinLogTampering.ps1'); break }
     default {
         @'
 Usage:

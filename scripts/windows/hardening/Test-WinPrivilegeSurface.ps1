@@ -48,7 +48,7 @@ foreach ($svc in $services | Where-Object { $_.StartName -eq 'LocalSystem' }) {
 }
 foreach ($task in $tasks) {
     if ($task.Principal.UserId -match 'SYSTEM|Administrators') {
-        $action = ($task.Actions | ForEach-Object { "$($_.Execute) $($_.Arguments)" }) -join '; '
+        $action = ($task.Actions | ForEach-Object { Get-OpsForgeTaskActionText $_ }) -join '; '
         if ($action -match '(?i)\\Users\\|\\AppData\\|\\Temp\\') {
             $findings.Add((New-OpsForgeFinding "WIN-PRIV-ADMIN-TASK-$([Math]::Abs(($task.TaskPath + $task.TaskName).GetHashCode()))" 'Privileged scheduled task executes writable-looking path' 'high' 'hardening' "$($task.TaskPath)$($task.TaskName): $action" 'Validate task path and remove unauthorized privileged automation.'))
         }

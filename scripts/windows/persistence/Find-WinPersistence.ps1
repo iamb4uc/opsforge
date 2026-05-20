@@ -58,7 +58,7 @@ foreach ($svc in $services) {
 }
 
 Get-ScheduledTask | ForEach-Object {
-    $action = ($_.Actions | ForEach-Object { "$($_.Execute) $($_.Arguments)" }) -join '; '
+    $action = ($_.Actions | ForEach-Object { Get-OpsForgeTaskActionText $_ }) -join '; '
     $autoruns.Add([pscustomobject]@{ Source = 'ScheduledTask'; Name = "$($_.TaskPath)$($_.TaskName)"; Command = $action })
     if ($_.Settings.Hidden) {
         $findings.Add((New-OpsForgeFinding "WIN-PERSIST-HIDDEN-TASK-$([Math]::Abs(($_.TaskPath + $_.TaskName).GetHashCode()))" 'Hidden scheduled task' 'medium' 'persistence' "$($_.TaskPath)$($_.TaskName)" 'Confirm task legitimacy and export XML for review.'))
@@ -114,4 +114,3 @@ Save-OpsForgeFindings -Findings $findings.ToArray() -OutputDirectory $OutDir
 @('# Windows Persistence Hunter','','Persistence records are stored in `raw\autoruns.json`.',"Findings: $($findings.Count)") | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'report.md')
 Save-OpsForgeSummary -OutputDirectory $OutDir -Title 'Windows persistence hunter' -FindingCount $findings.Count
 Write-OpsForgeInfo -Message "Output written to $OutDir" -Quiet:$Quiet
-

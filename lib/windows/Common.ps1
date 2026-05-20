@@ -80,3 +80,22 @@ function Get-OpsForgeSafeFileName {
     param([string]$Name)
     return ($Name -replace '[\\/:*?"<>| ]', '_')
 }
+
+function Get-OpsForgeTaskActionText {
+    param([object]$Action)
+    if ($null -eq $Action) { return '' }
+
+    $execute = ''
+    $arguments = ''
+    if ($Action.PSObject.Properties.Name -contains 'Execute') {
+        $execute = [string]$Action.Execute
+    }
+    if ($Action.PSObject.Properties.Name -contains 'Arguments') {
+        $arguments = [string]$Action.Arguments
+    }
+    if ($execute -or $arguments) {
+        return "$execute $arguments".Trim()
+    }
+
+    return $Action.GetType().Name
+}

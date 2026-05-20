@@ -35,6 +35,10 @@ jobs:
         shell: bash
         run: ./bin/test forbidden-files
 
+      - name: readability
+        shell: bash
+        run: ./bin/test readability
+
       - name: sample output contract
         shell: bash
         run: ./bin/test sample-output
@@ -47,6 +51,10 @@ jobs:
         shell: bash
         run: ./bin/test shellcheck
 
+      - name: runtime linux
+        shell: bash
+        run: ./bin/test runtime-linux
+
       - name: upload shell artifacts on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -54,6 +62,14 @@ jobs:
           name: linux-shell-artifacts
           path: .ci-artifacts/
           if-no-files-found: ignore
+
+      - name: upload runtime output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: opsforge-linux-runtime-output
+          path: output/
+          if-no-files-found: error
 
   linux-feasibility:
     name: linux feasibility
@@ -75,8 +91,8 @@ jobs:
           OPSFORGE_TEST_OUTPUT=/repo/.ci-artifacts ./bin/test linux-feasibility
           CONTAINER
 
-      - name: upload feasibility artifacts on failure
-        if: failure()
+      - name: upload feasibility artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: linux-feasibility-artifacts
