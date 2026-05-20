@@ -1,11 +1,6 @@
 output/*
 !output/.gitkeep
 .ci-artifacts/
-.local/
-.codex.md
-.codex/
-prompts/
-AGENTS.md
 
 *.tmp
 *.log
