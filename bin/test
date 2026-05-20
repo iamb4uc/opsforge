@@ -17,6 +17,8 @@ Usage:
   bin/test sample-output
   bin/test linux-fixtures
   bin/test linux-feasibility
+  bin/test runtime-linux
+  bin/test readability
   bin/test output-contract
   bin/test all
 
@@ -90,6 +92,19 @@ assert_contracts_under() {
   say "validated output contracts=$count"
 }
 
+run_runtime_linux_one() {
+  local name="$1"
+  local script_name="$2"
+  shift 2
+  say "runtime-linux: $name"
+  "$@"
+  local out_dir
+  out_dir="$(latest_output_dir "$OPSFORGE_RUNTIME_OUTPUT_DIR" "$script_name")"
+  [ -n "$out_dir" ] || fail "$name did not create an output directory"
+  printf '[test] runtime-linux output: %s\n' "$out_dir"
+  "$ROOT/bin/validate-output-contract" "$out_dir"
+}
+
 test_syntax() {
   say "checking bash syntax"
   while IFS= read -r file; do
@@ -129,6 +144,30 @@ test_forbidden_files() {
       -name '*.dll' -o -name '*.so' -o -name '*.dylib' \
     \) -print)"
   [ -z "$files" ] || fail "forbidden core language or binary files found: $files"
+}
+
+test_readability() {
+  say "checking source readability"
+  local failed=0
+  while IFS= read -r file; do
+    if [ -f "$file" ] && grep -Iq . "$file"; then
+      awk 'length($0) > 500 {printf "%s:%d: line length %d\n", FILENAME, NR, length($0); bad=1} END {exit bad ? 1 : 0}' "$file" ||
+        failed=1
+    fi
+  done < <(
+    find "$ROOT" \
+      -path "$ROOT/.git" -prune -o \
+      -path "$ROOT/.ci-artifacts" -prune -o \
+      -path "$ROOT/output" -prune -o \
+      -path "$ROOT/examples" -prune -o \
+      -type f \( \
+        -name '*.md' -o -name '*.sh' -o -name '*.ps1' -o -name '*.yml' -o \
+        -name '*.yaml' -o -name '*.conf' -o -name '.gitignore' -o \
+        -path "$ROOT/bin/opsforge" -o -path "$ROOT/bin/test" -o \
+        -path "$ROOT/bin/validate-output-contract" \
+      \) -print | sort
+  )
+  [ "$failed" -eq 0 ] || fail "readability check failed"
 }
 
 test_wrapper_targets() {
@@ -253,6 +292,54 @@ test_linux_feasibility() {
   say "linux feasibility evidence: $LINUX_FEASIBILITY_ROOT"
 }
 
+test_runtime_linux() {
+  say "running Linux runtime validation"
+  OPSFORGE_RUNTIME_OUTPUT_DIR="${OPSFORGE_RUNTIME_OUTPUT:-$ROOT/output}"
+  if ! mkdir -p "$OPSFORGE_RUNTIME_OUTPUT_DIR" 2>/dev/null ||
+    [ ! -w "$OPSFORGE_RUNTIME_OUTPUT_DIR" ]; then
+    if [ -n "${OPSFORGE_RUNTIME_OUTPUT:-}" ]; then
+      fail "runtime output directory is not writable: $OPSFORGE_RUNTIME_OUTPUT_DIR"
+    fi
+    OPSFORGE_RUNTIME_OUTPUT_DIR="$TEST_ROOT/runtime-output"
+    say "output/ is not writable; using $OPSFORGE_RUNTIME_OUTPUT_DIR"
+  fi
+  export OPSFORGE_RUNTIME_OUTPUT_DIR
+  mkdir -p "$OPSFORGE_RUNTIME_OUTPUT_DIR"
+
+  run_runtime_linux_one \
+    triage \
+    linux-triage-collector \
+    "$ROOT/bin/opsforge" linux triage \
+    --output "$OPSFORGE_RUNTIME_OUTPUT_DIR" --markdown --json
+
+  run_runtime_linux_one \
+    persistence \
+    linux-persistence-hunter \
+    "$ROOT/bin/opsforge" linux persistence \
+    --output "$OPSFORGE_RUNTIME_OUTPUT_DIR" --markdown --json
+
+  run_runtime_linux_one \
+    deleted-binaries \
+    deleted-binary-detector \
+    "$ROOT/bin/opsforge" linux deleted-binaries \
+    --output "$OPSFORGE_RUNTIME_OUTPUT_DIR" --markdown --json
+
+  run_runtime_linux_one \
+    disk-rca \
+    disk-pressure-rca \
+    "$ROOT/bin/opsforge" linux disk-rca \
+    --output "$OPSFORGE_RUNTIME_OUTPUT_DIR" --markdown --json
+
+  if [ -f "$ROOT/configs/linux/tls-targets.conf" ]; then
+    run_runtime_linux_one \
+      tls \
+      tls-inventory-scanner \
+      "$ROOT/bin/opsforge" linux tls \
+      --targets "$ROOT/configs/linux/tls-targets.conf" \
+      --output "$OPSFORGE_RUNTIME_OUTPUT_DIR" --markdown --json
+  fi
+}
+
 test_output_contract() {
   say "running output contract tests"
   test_linux_fixtures
@@ -264,22 +351,26 @@ case "${1:-}" in
   help) test_help ;;
   shellcheck) test_shellcheck ;;
   forbidden-files) test_forbidden_files ;;
+  readability) test_readability ;;
   wrapper-targets) test_wrapper_targets ;;
   script-catalog) test_script_catalog ;;
   sample-output) test_sample_output ;;
   linux-fixtures) test_linux_fixtures ;;
   linux-feasibility) test_linux_feasibility ;;
+  runtime-linux) test_runtime_linux ;;
   output-contract) test_output_contract ;;
   all)
     test_syntax
     test_help
     test_shellcheck
     test_forbidden_files
+    test_readability
     test_wrapper_targets
     test_script_catalog
     test_sample_output
     test_linux_fixtures
     test_linux_feasibility
+    test_runtime_linux
     ;;
   -h|--help) usage ;;
   *) usage; exit 2 ;;

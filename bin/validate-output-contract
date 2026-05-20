@@ -36,7 +36,10 @@ assert_nonempty_file() {
 field_count() {
   local file="$1"
   local field="$2"
-  { grep -o "\"$field\":\"[^\"]*\"" "$file" 2>/dev/null || true; } | wc -l
+  {
+    grep -Eo "\"$field\"[[:space:]]*:[[:space:]]*\"([^\"\\\\]|\\\\.)*\"" "$file" 2>/dev/null ||
+      true
+  } | wc -l
 }
 
 finding_count() {
@@ -61,9 +64,17 @@ validate_with_shell() {
 
   awk '
     BEGIN {ok=1}
-    NR == 1 && $0 !~ /^\[/ {ok=0}
-    {last=$0}
-    END {if (last !~ /^\]$/) ok=0; exit ok ? 0 : 1}
+    {
+      line=$0
+      sub(/^[[:space:]]*/, "", line)
+      sub(/[[:space:]]*$/, "", line)
+      if (NR == 1 && line !~ /^\[/) ok=0
+      if (line != "") last=line
+    }
+    END {
+      if (last !~ /\]$/) ok=0
+      exit ok ? 0 : 1
+    }
   ' "$file" || fail "findings.json is not a simple JSON array: $file"
 
   ids="$(finding_count "$file")"
@@ -83,7 +94,7 @@ validate_with_shell() {
   [ "$evidence" -eq "$ids" ] || fail "evidence count does not match id count in $file"
   [ "$recommendations" -eq "$ids" ] || fail "recommendation count does not match id count in $file"
 
-  bad_severity="$({ grep -o '"severity":"[^"]*"' "$file" || true; } |
+  bad_severity="$({ grep -Eo '"severity"[[:space:]]*:[[:space:]]*"[^"]*"' "$file" || true; } |
     awk -F '"' '$4 !~ /^(critical|high|medium|low|info)$/ {print $4; bad=1} END {exit bad ? 0 : 1}' || true)"
   [ -z "$bad_severity" ] || fail "invalid severity in $file: $bad_severity"
 }

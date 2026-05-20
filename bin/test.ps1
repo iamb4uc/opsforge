@@ -45,6 +45,16 @@ function New-TestRunDirectory {
     return (Resolve-Path $candidate).Path
 }
 
+function New-RuntimeOutputRoot {
+    if ($env:OPSFORGE_RUNTIME_OUTPUT) {
+        New-Item -ItemType Directory -Force -Path $env:OPSFORGE_RUNTIME_OUTPUT | Out-Null
+        return (Resolve-Path $env:OPSFORGE_RUNTIME_OUTPUT).Path
+    }
+    $path = Join-Path $Root 'output'
+    New-Item -ItemType Directory -Force -Path $path | Out-Null
+    return (Resolve-Path $path).Path
+}
+
 function Get-FindingCount {
     param([string]$Path)
     $json = Get-Content -Raw -Path $Path | ConvertFrom-Json
@@ -137,17 +147,24 @@ function Test-WrapperTargets {
 function Invoke-SafeRuntimeCheck {
     param(
         [string]$Name,
-        [string]$ScriptPath,
+        [string[]]$Arguments,
         [string]$ScriptName,
         [string]$OutputRoot
     )
     Write-Host "::group::$Name"
     try {
-        & (Join-Path $Root $ScriptPath) -OutputPath $OutputRoot -Quiet
+        $wrapper = Join-Path $Root 'bin\opsforge.ps1'
+        if ($Arguments.Count -gt 2) {
+            $remaining = $Arguments[2..($Arguments.Count - 1)]
+            & $wrapper $Arguments[0] $Arguments[1] -OutputPath $OutputRoot -Json -Markdown -Quiet @remaining
+        } else {
+            & $wrapper $Arguments[0] $Arguments[1] -OutputPath $OutputRoot -Json -Markdown -Quiet
+        }
         $exitCode = Get-Variable -Name LASTEXITCODE -ValueOnly -ErrorAction SilentlyContinue
         if ($null -ne $exitCode -and $exitCode -ne 0) { Fail-Test "$Name exited with $exitCode" }
         $outDir = Get-LatestOutputDirectory -Base $OutputRoot -ScriptName $ScriptName
         if (-not $outDir) { Fail-Test "$Name did not create output" }
+        Write-TestLine "$Name output: $outDir"
         Test-OutputContract -OutputDirectory $outDir
     } finally {
         Write-Host "::endgroup::"
@@ -156,10 +173,12 @@ function Invoke-SafeRuntimeCheck {
 
 function Test-Runtime {
     Write-TestLine 'running safe windows runtime checks'
-    $outputRoot = New-TestRunDirectory -Name 'windows-runtime'
-    Invoke-SafeRuntimeCheck -Name 'network' -ScriptPath 'scripts\windows\network\Get-WinNetworkExposure.ps1' -ScriptName 'Get-WinNetworkExposure' -OutputRoot $outputRoot
-    Invoke-SafeRuntimeCheck -Name 'tasks' -ScriptPath 'scripts\windows\persistence\Test-WinScheduledTasks.ps1' -ScriptName 'Test-WinScheduledTasks' -OutputRoot $outputRoot
-    Invoke-SafeRuntimeCheck -Name 'services' -ScriptPath 'scripts\windows\endpoint\Test-WinServiceAnomaly.ps1' -ScriptName 'Test-WinServiceAnomaly' -OutputRoot $outputRoot
+    $outputRoot = New-RuntimeOutputRoot
+    Invoke-SafeRuntimeCheck -Name 'triage' -Arguments @('windows','triage') -ScriptName 'Invoke-WinTriage' -OutputRoot $outputRoot
+    Invoke-SafeRuntimeCheck -Name 'persistence' -Arguments @('windows','persistence') -ScriptName 'Find-WinPersistence' -OutputRoot $outputRoot
+    Invoke-SafeRuntimeCheck -Name 'tasks' -Arguments @('windows','tasks') -ScriptName 'Test-WinScheduledTasks' -OutputRoot $outputRoot
+    Invoke-SafeRuntimeCheck -Name 'network' -Arguments @('windows','network') -ScriptName 'Get-WinNetworkExposure' -OutputRoot $outputRoot
+    Invoke-SafeRuntimeCheck -Name 'timeline' -Arguments @('windows','timeline') -ScriptName 'New-WinEventTimeline' -OutputRoot $outputRoot
     Write-TestLine "windows runtime evidence: $outputRoot"
 }
 

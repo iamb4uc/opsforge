@@ -70,7 +70,7 @@ Get-CimInstance Win32_Service | ForEach-Object {
 }
 
 Get-ScheduledTask | ForEach-Object {
-    $action = ($_.Actions | ForEach-Object { "$($_.Execute) $($_.Arguments)" }) -join '; '
+    $action = ($_.Actions | ForEach-Object { Get-OpsForgeTaskActionText $_ }) -join '; '
     if ($action -match '(?i)powershell.*(-enc|-encodedcommand)|\\AppData\\|\\Temp\\|\\Users\\Public\\') {
         $findings.Add((New-OpsForgeFinding "WIN-TRIAGE-TASK-$([Math]::Abs(($_.TaskPath + $_.TaskName).GetHashCode()))" 'Suspicious scheduled task action' 'high' 'endpoint' "$($_.TaskPath)$($_.TaskName): $action" 'Export task XML and verify task author, action, and trigger.'))
     }

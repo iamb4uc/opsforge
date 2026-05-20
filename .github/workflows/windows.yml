@@ -85,3 +85,11 @@ jobs:
           path: .ci-artifacts/
           if-no-files-found: ignore
           include-hidden-files: true
+
+      - name: upload runtime output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: opsforge-windows-runtime-output
+          path: output/
+          if-no-files-found: error

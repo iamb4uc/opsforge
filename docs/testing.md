@@ -12,8 +12,10 @@ Fast local checks:
 ./bin/test wrapper-targets
 ./bin/test script-catalog
 ./bin/test forbidden-files
+./bin/test readability
 ./bin/test sample-output
 ./bin/test linux-fixtures
+./bin/test runtime-linux
 ```
 
 Docker feasibility check:
@@ -45,9 +47,11 @@ PowerShell checks:
 
 The runtime check currently executes:
 
-- `Get-WinNetworkExposure.ps1`
+- `Invoke-WinTriage.ps1`
+- `Find-WinPersistence.ps1`
 - `Test-WinScheduledTasks.ps1`
-- `Test-WinServiceAnomaly.ps1`
+- `Get-WinNetworkExposure.ps1`
+- `New-WinEventTimeline.ps1`
 
 Each runtime output is checked for the standard `raw/`, `normalized/`,
 `report.md`, `findings.json`, and `summary.txt` shape.
