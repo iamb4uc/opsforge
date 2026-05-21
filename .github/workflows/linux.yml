@@ -39,9 +39,9 @@ jobs:
         shell: bash
         run: ./bin/test readability
 
-      - name: sample output contract
+      - name: output contract fixture
         shell: bash
-        run: ./bin/test sample-output
+        run: ./bin/test output-contract
 
       - name: fixture checks
         shell: bash
