@@ -13,7 +13,7 @@ Fast local checks:
 ./bin/test script-catalog
 ./bin/test forbidden-files
 ./bin/test readability
-./bin/test sample-output
+./bin/test output-contract
 ./bin/test linux-fixtures
 ./bin/test runtime-linux
 ```
@@ -32,7 +32,7 @@ CONTAINER
 ```
 
 This catches syntax, wrapper drift, catalog drift, forbidden language files,
-sample output contract failures, and read-only Linux script runtime failures.
+output contract fixture failures, and read-only Linux script runtime failures.
 
 ## Windows
 

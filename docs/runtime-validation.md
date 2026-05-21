@@ -1,7 +1,7 @@
 # Runtime Validation
 
 opsforge is validated by running tools against real CI hosts instead of relying
-on fake sample output.
+on fixture output.
 
 ## Linux runtime validation
 

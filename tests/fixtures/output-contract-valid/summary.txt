@@ -1,0 +1,3 @@
+Fixture triage
+Output: tests/fixtures/output-contract-valid
+Findings: 1

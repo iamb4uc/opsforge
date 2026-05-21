@@ -54,7 +54,7 @@ Linux checks:
 ./bin/test help
 ./bin/test wrapper-targets
 ./bin/test script-catalog
-./bin/test sample-output
+./bin/test output-contract
 ./bin/test linux-feasibility
 ```
 

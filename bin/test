@@ -14,12 +14,11 @@ Usage:
   bin/test forbidden-files
   bin/test wrapper-targets
   bin/test script-catalog
-  bin/test sample-output
+  bin/test output-contract
   bin/test linux-fixtures
   bin/test linux-feasibility
   bin/test runtime-linux
   bin/test readability
-  bin/test output-contract
   bin/test all
 
 Runs local validation for opsforge. The tests are read-only against the host and
@@ -196,9 +195,9 @@ test_script_catalog() {
   done < <(grep -o '`scripts/[^`]*`' "$ROOT/docs/script-catalog.md" | tr -d '`' | sort -u)
 }
 
-test_sample_output() {
-  say "checking sample output fixture"
-  "$ROOT/bin/validate-output-contract" "$ROOT/tests/fixtures/sample-output-valid" >/dev/null
+test_output_contract() {
+  say "checking output contract fixture"
+  "$ROOT/bin/validate-output-contract" "$ROOT/tests/fixtures/output-contract-valid" >/dev/null
 }
 
 test_linux_fixtures() {
@@ -340,12 +339,6 @@ test_runtime_linux() {
   fi
 }
 
-test_output_contract() {
-  say "running output contract tests"
-  test_linux_fixtures
-  test_linux_feasibility
-}
-
 case "${1:-}" in
   syntax) test_syntax ;;
   help) test_help ;;
@@ -354,11 +347,10 @@ case "${1:-}" in
   readability) test_readability ;;
   wrapper-targets) test_wrapper_targets ;;
   script-catalog) test_script_catalog ;;
-  sample-output) test_sample_output ;;
+  output-contract) test_output_contract ;;
   linux-fixtures) test_linux_fixtures ;;
   linux-feasibility) test_linux_feasibility ;;
   runtime-linux) test_runtime_linux ;;
-  output-contract) test_output_contract ;;
   all)
     test_syntax
     test_help
@@ -367,7 +359,7 @@ case "${1:-}" in
     test_readability
     test_wrapper_targets
     test_script_catalog
-    test_sample_output
+    test_output_contract
     test_linux_fixtures
     test_linux_feasibility
     test_runtime_linux

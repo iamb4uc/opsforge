@@ -1,58 +1,64 @@
 # opsforge
 
-opsforge is a shell-only defensive operations toolkit for SOC analysts,
-NOC engineers, Linux administrators, Windows administrators, incident responders,
-and security engineers.
+opsforge is a shell-only toolkit for SOC, NOC, Linux, Windows, IR, and ops work.
 
-The project focuses on real operational automation:
+It is built for the boring stuff that actually matters: triage, persistence checks,
+disk issues, timelines, network exposure, and reports you can use.
+
+No fake polish. No random helper stack. No toy recon wrappers.
+
+## Status
+
+opsforge is beta. The scripts are useful, but they are still being tested across
+real systems and CI runners.
+
+The project stays shell-only:
+
+- Linux and Unix scripts use Bash or POSIX sh where that makes sense.
+- Windows scripts use PowerShell.
+- Core tooling does not use Python, Go, Rust, Node.js, Ruby, Perl, or compiled
+  helpers.
+- Scripts are read-only by default unless a script clearly says otherwise and
+  exposes an explicit action flag.
+
+## What It Does
+
+Current work focuses on:
+
 - Linux and Windows host triage
-- persistence hunting
-- network drift checks
+- persistence checks
+- deleted binary detection
+- disk pressure notes
 - TLS inventory
-- firewall exposure review
-- disk pressure root cause analysis
-- log source silence detection
-- timeline generation
-- endpoint hardening audits
+- firewall and network exposure checks
+- event and log timelines
+- output folders with raw evidence, findings, summaries, and reports
 
-This repository avoids beginner-level recon wrappers and noisy toy scripts.
-Every script should produce useful evidence, structured findings, and a readable
-report that can help during real investigations.
+## Runtime Checks
 
-## Maturity
+CI runs selected tools on Linux and Windows runners.
 
-opsforge is beta. Treat the current script set as operationally useful but still
-under active validation unless a script's documentation says otherwise.
+Generated output is checked against the output contract after runtime execution.
+Runtime artifacts are uploaded by CI and are not committed to the repo.
 
-The v0.5.0 target is runtime validation and readability cleanup. The project is
-moving away from polished sample output and toward CI proof that tools run on
-real Linux and Windows hosts.
+Fixture checks only prove the output contract parser. They are not proof that the
+tools work. Runtime checks are what catch real script failures.
 
-- Stable: shared output contract, command wrappers, script inventory checks.
-- Beta: Linux tools covered by real runtime checks and Docker feasibility checks.
-- Beta: selected Windows tools covered by CI runtime checks on GitHub's Windows runner.
-- Experimental: Windows scripts that are parser-tested but not runtime-tested in CI yet.
+Linux:
 
-## Runtime Policy
+```bash
+./bin/test runtime-linux
+```
 
-- Linux/Unix: POSIX sh where possible, Bash where needed.
-- Windows: PowerShell 5.1+.
-- No Python, Go, Rust, Node.js, Ruby, or compiled helper binaries for the core toolkit.
-- Optional external tools must be standard on the platform or documented by the script.
-- Scripts are read-only by default unless an explicit execution or apply flag is implemented.
+Windows:
 
-## Runtime validation
-
-opsforge validates runtime behavior by executing selected tools on GitHub Linux
-and Windows runners.
-
-Generated output directories are checked against the output contract.
-
-Runtime artifacts are uploaded by CI and are not committed to the repository.
-Tiny sample fixtures may exist for schema tests, but fake sample output is not
-used as proof that tools work.
+```powershell
+.\bin\test.ps1 runtime
+```
 
 ## Commands
+
+Linux:
 
 ```bash
 ./bin/opsforge linux triage --output ./output --markdown --json
@@ -74,6 +80,8 @@ used as proof that tools work.
 ./bin/opsforge linux web-triage --output ./output
 ```
 
+Windows:
+
 ```powershell
 .\bin\opsforge.ps1 windows triage -OutputPath .\output -Json -Markdown
 .\bin\opsforge.ps1 windows persistence -OutputPath .\output
@@ -89,7 +97,7 @@ used as proof that tools work.
 
 ## Output
 
-Major scripts create timestamped directories:
+Major scripts create timestamped output directories:
 
 ```text
 output/HOSTNAME-scriptname-YYYYMMDD-HHMMSS/
@@ -101,28 +109,21 @@ output/HOSTNAME-scriptname-YYYYMMDD-HHMMSS/
 └── evidence.tar.gz
 ```
 
-`findings.json` uses a stable schema with `id`, `title`, `severity`, `host`,
-`category`, `evidence`, and `recommendation`.
+`findings.json` uses the same fields everywhere:
 
-Validate any generated output directory with:
+```text
+id, title, severity, host, category, evidence, recommendation
+```
+
+Validate a generated output directory with:
 
 ```bash
 ./bin/validate-output-contract output/HOSTNAME-scriptname-YYYYMMDD-HHMMSS
 ```
 
-## Sensitive output warning
-
-opsforge collects host and system data.
-
-Generated reports may contain hostnames, usernames, IP addresses, process
-arguments, service names, file paths, registry values, and other sensitive
-operational details.
-
-Review and sanitize output before sharing it.
-
 ## Testing
 
-Local Linux checks:
+Linux:
 
 ```bash
 ./bin/test syntax
@@ -131,41 +132,37 @@ Local Linux checks:
 ./bin/test script-catalog
 ./bin/test forbidden-files
 ./bin/test readability
-./bin/test sample-output
+./bin/test output-contract
 ./bin/test linux-fixtures
 ./bin/test runtime-linux
 ```
 
-Windows checks:
+Windows:
 
 ```powershell
 .\bin\test.ps1 parser
-.\bin\test.ps1 static
 .\bin\test.ps1 wrapper-targets
+.\bin\test.ps1 static
 .\bin\test.ps1 runtime
 ```
 
-Full Linux feasibility checks are designed to run in Docker:
+## Sensitive Output
 
-```bash
-docker run -i --rm -v "$PWD:/repo" -w /repo ubuntu:24.04 bash -s <<'CONTAINER'
-set -euo pipefail
-apt-get update >/dev/null
-DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-  bash ca-certificates coreutils findutils gawk grep gzip iproute2 openssl procps sed tar util-linux \
-  >/dev/null
-OPSFORGE_TEST_OUTPUT=/repo/.ci-artifacts ./bin/test linux-feasibility
-CONTAINER
-```
+opsforge collects host and system data.
 
-## Documentation
+Generated reports may contain hostnames, usernames, IP addresses, process
+arguments, service names, file paths, registry values, and other operational
+details.
 
-- Script catalog: `docs/script-catalog.md`
-- Output format: `docs/output-format.md`
-- Report standard: `docs/report-standard.md`
-- Script metadata: `docs/script-metadata.md`
+Review and sanitize output before sharing it.
+
+## Docs
+
 - Runtime validation: `docs/runtime-validation.md`
 - Manual testing: `docs/manual-testing.md`
 - Compatibility: `docs/compatibility.md`
+- Output format: `docs/output-format.md`
+- Report standard: `docs/report-standard.md`
+- Script catalog: `docs/script-catalog.md`
 - Testing: `docs/testing.md`
 - Changelog: `CHANGELOG.md`
