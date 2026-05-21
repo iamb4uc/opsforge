@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.5.0 - Unreleased
+## v0.5.0 - 2026-05-20
 
 - Reformatted source files for readability and reviewability.
 - Added Linux runtime validation for real script execution.
