@@ -2,8 +2,7 @@
 
 opsforge is a shell-only toolkit for SOC, NOC, Linux, Windows, IR, and ops work.
 
-It is built for the boring stuff that actually matters: triage, persistence checks,
-disk issues, timelines, network exposure, and reports you can use.
+It is built for the boring stuff that actually matters: triage, persistence checks, disk issues, timelines, network exposure, and reports you can use.
 
 No fake polish. No random helper stack. No toy recon wrappers.
 
