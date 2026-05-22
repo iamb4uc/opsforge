@@ -17,7 +17,8 @@ and degrade clearly when optional commands are missing.
 | Debian | planned/manual testing | Expected to work with standard GNU userland. |
 | RHEL-like systems | planned/manual testing | Some command output may differ. |
 | Arch | planned/manual testing | Rolling package versions may expose parser differences. |
-| Void Linux | manual/runtime tested | runit service paths and `sv` status are handled where scripts inspect init data. |
+| Void Linux | CI Docker tested | runit service paths and `sv` status are handled where scripts inspect init data. |
+| Alpine Linux | CI Docker tested | OpenRC paths and `rc-status` are handled where scripts inspect init data. |
 
 ## Windows Status
 

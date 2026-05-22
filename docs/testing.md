@@ -21,15 +21,22 @@ Fast local checks:
 Docker feasibility check:
 
 ```bash
-docker run -i --rm -v "$PWD:/repo" -w /repo ubuntu:24.04 bash -s <<'CONTAINER'
-set -euo pipefail
+docker run -i --rm -v "$PWD:/repo" -w /repo ubuntu:24.04 /bin/sh -s <<'CONTAINER'
+set -eu
 apt-get update >/dev/null
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-  bash ca-certificates coreutils findutils gawk grep gzip iproute2 openssl procps sed tar util-linux \
+  bash ca-certificates coreutils findutils gawk grep gzip iproute2 \
+  openssl procps sed tar util-linux \
   >/dev/null
-OPSFORGE_TEST_OUTPUT=/repo/.ci-artifacts ./bin/test linux-feasibility
+OPSFORGE_TEST_OUTPUT=/repo/.ci-artifacts bash ./bin/test linux-feasibility
 CONTAINER
 ```
+
+CI runs the same feasibility suite across:
+
+- Ubuntu 24.04 for systemd-style paths and commands.
+- Void Linux for runit paths and `sv` handling.
+- Alpine Linux for OpenRC paths and `rc-status` handling.
 
 This catches syntax, wrapper drift, catalog drift, forbidden language files,
 output contract fixture failures, and read-only Linux script runtime failures.
@@ -58,7 +65,8 @@ Each runtime output is checked for the standard `raw/`, `normalized/`,
 
 ## CI Notes
 
-- Linux runtime checks run in Ubuntu 24.04 Docker.
+- Linux runtime checks run on the GitHub Linux runner.
+- Linux feasibility checks run in Ubuntu, Void, and Alpine containers.
 - Windows runtime checks run on GitHub's Windows runner.
 - Parser-only Windows scripts are still useful, but they should not be treated
   as runtime-proven until added to `bin/test.ps1 runtime`.
