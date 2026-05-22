@@ -17,7 +17,8 @@ and degrade clearly when optional commands are missing.
 | Debian | planned/manual testing | Expected to work with standard GNU userland. |
 | RHEL-like systems | planned/manual testing | Some command output may differ. |
 | Arch | planned/manual testing | Rolling package versions may expose parser differences. |
-| Void Linux | planned/manual testing | Non-systemd behavior should be handled explicitly. |
+| Void Linux | CI Docker tested | runit service paths and `sv` status are handled where scripts inspect init data. |
+| Alpine Linux | CI Docker tested | OpenRC paths and `rc-status` are handled where scripts inspect init data. |
 
 ## Windows Status
 
@@ -38,15 +39,30 @@ and degrade clearly when optional commands are missing.
 ## Optional Dependencies
 
 Optional tools may improve output but must not be required unless documented in
-script help and metadata. Examples include `journalctl`, `systemctl`, `ss`,
-`openssl`, `curl`, `lsof`, and Windows Defender cmdlets.
+script help and metadata. Examples include `journalctl`, `systemctl`, `sv`,
+`rc-status`, `rc-service`, `ss`, `openssl`, `curl`, `lsof`, and Windows
+Defender cmdlets.
+
+## Init Systems
+
+Linux checks should not assume systemd.
+
+Current init/service coverage:
+
+- systemd: `/etc/systemd/system`, `/usr/lib/systemd/system`,
+  `/lib/systemd/system`, user units, and `systemctl` when available.
+- runit: `/etc/runit`, `/etc/sv`, `/var/service`, `/service`, `/etc/service`,
+  and `sv status` when available.
+- OpenRC: `/etc/init.d`, `/etc/conf.d`, `/etc/runlevels`, and `rc-status`
+  when available.
+- SysV-style fallback: `/etc/init.d` and `service --status-all` when present.
 
 ## Known Limitations
 
 - Containers do not expose the same process, service, and kernel state as full
   hosts.
-- Some Linux distributions lack systemd, journalctl, or GNU-specific `find`
-  features.
+- Some Linux distributions lack systemd, journalctl, runit/OpenRC tools, or
+  GNU-specific `find` features.
 - Windows CI uses GitHub-hosted Server 2025 runners. It proves parser,
   wrapper, command availability, and selected runtime behavior, not every
   real audit-policy setup.

@@ -65,11 +65,11 @@ scan_path() {
   fi
 }
 
+while IFS= read -r path; do
+  scan_path "$path"
+done < <(opsforge_init_paths)
+
 for path in \
-  /etc/systemd/system \
-  /usr/lib/systemd/system \
-  /lib/systemd/system \
-  "$HOME/.config/systemd/user" \
   /etc/cron.d /etc/cron.daily /etc/cron.hourly /etc/cron.weekly /etc/cron.monthly /etc/crontab \
   /var/spool/cron \
   /etc/rc.local \

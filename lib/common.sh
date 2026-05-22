@@ -38,6 +38,22 @@ opsforge_make_output_dir() {
   printf '%s\n' "$dir"
 }
 
+opsforge_init_paths() {
+  printf '%s\n' \
+    /etc/systemd/system \
+    /usr/lib/systemd/system \
+    /lib/systemd/system \
+    "$HOME/.config/systemd/user" \
+    /etc/runit \
+    /etc/sv \
+    /var/service \
+    /service \
+    /etc/service \
+    /etc/init.d \
+    /etc/conf.d \
+    /etc/runlevels
+}
+
 json_escape() {
   local s="${1-}"
   s="${s//\\/\\\\}"
@@ -96,6 +112,10 @@ safe_run() {
   started_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   command_text="$(printf '%s ' "$@")"
   command_text="${command_text% }"
+  if [ "${VERBOSE:-0}" = "1" ] && [ "${QUIET:-0}" != "1" ]; then
+    printf '[DEBUG] running: %s\n' "$command_text" >&2
+    printf '[DEBUG] writing: %s\n' "$outfile" >&2
+  fi
   {
     printf '$'
     printf ' %s' "$@"
@@ -108,6 +128,9 @@ safe_run() {
   ended_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   status="ok"
   [ "$exit_code" -eq 0 ] || status="failed"
+  if [ "${VERBOSE:-0}" = "1" ] && [ "${QUIET:-0}" != "1" ]; then
+    printf '[DEBUG] finished: %s exit=%s status=%s\n' "$command_text" "$exit_code" "$status" >&2
+  fi
   if [ ! -s "$status_file" ]; then
     printf 'command\toutput_file\texit_code\tstatus\tstarted_at\tended_at\n' > "$status_file"
   fi
