@@ -50,7 +50,16 @@ OUT_DIR="$(opsforge_make_output_dir "$OUTPUT_BASE" "$SCRIPT_NAME")"
 TMP_FINDINGS="$OUT_DIR/normalized/findings.tmp"
 : > "$TMP_FINDINGS"
 
-TRACK_PATHS="/etc/ssh/sshd_config /etc/sudoers /etc/passwd /etc/group /etc/fstab /etc/crontab /etc/systemd/system /etc/nginx /etc/apache2"
+TRACK_PATHS="
+/etc/ssh/sshd_config
+/etc/sudoers
+/etc/passwd
+/etc/group
+/etc/fstab
+/etc/crontab
+/etc/nginx
+/etc/apache2
+"
 
 copy_tree() {
   local src="$1" dest="$2"
@@ -59,15 +68,19 @@ copy_tree() {
     cp -p "$src" "$dest" 2>/dev/null || true
   elif [ -d "$src" ]; then
     mkdir -p "$dest"
-    find "$src" -maxdepth 4 -type f -print 2>/dev/null | while IFS= read -r file; do
+    while IFS= read -r file; do
       rel="${file#$src/}"
       mkdir -p "$(dirname "$dest/$rel")"
       cp -p "$file" "$dest/$rel" 2>/dev/null || true
-    done
+    done < <(find "$src" -maxdepth 4 -type f -print 2>/dev/null || true)
   fi
 }
 
-for path in $TRACK_PATHS; do
+{
+  printf '%s\n' $TRACK_PATHS
+  opsforge_init_paths
+} | while IFS= read -r path; do
+  [ -n "$path" ] || continue
   safe="${path#/}"
   copy_tree "$path" "$OUT_DIR/raw/current/$safe"
 done
@@ -82,8 +95,8 @@ else
     write_finding_json "$TMP_FINDINGS" "LINUX-CONFIG-SSH-PASSWORD" "PasswordAuthentication changed to yes" "high" "$HOST" "hardening" "raw/config.diff" "Revert PasswordAuthentication to no unless approved."
   grep -Ei '^\+[^+].*NOPASSWD' "$OUT_DIR/raw/config.diff" >/dev/null &&
     write_finding_json "$TMP_FINDINGS" "LINUX-CONFIG-SUDO-NOPASSWD" "New sudoers NOPASSWD rule detected" "medium" "$HOST" "hardening" "raw/config.diff" "Validate the sudo exception and restrict scope."
-  grep -Ei '^\+[^+].*(ExecStart=.*(/tmp/|/dev/shm/|/var/tmp/)|/opt/tmp)' "$OUT_DIR/raw/config.diff" >/dev/null &&
-    write_finding_json "$TMP_FINDINGS" "LINUX-CONFIG-SYSTEMD-TMP" "New service executes from suspicious path" "high" "$HOST" "persistence" "raw/config.diff" "Investigate the service unit and referenced binary."
+  grep -Ei '^\+[^+].*(ExecStart=.*(/tmp/|/dev/shm/|/var/tmp/)|/opt/tmp|/tmp/|/dev/shm/|/var/tmp/)' "$OUT_DIR/raw/config.diff" >/dev/null &&
+    write_finding_json "$TMP_FINDINGS" "LINUX-CONFIG-INIT-TMP" "New init or service config references a suspicious path" "high" "$HOST" "persistence" "raw/config.diff" "Investigate the service config and referenced binary."
 fi
 
 finalize_findings_json "$TMP_FINDINGS" "$OUT_DIR/findings.json"
@@ -97,4 +110,3 @@ cp "$OUT_DIR/findings.json" "$OUT_DIR/normalized/findings.json"
 write_basic_summary "$OUT_DIR/summary.txt" "Config drift monitor" "$OUT_DIR" "$(count_findings "$OUT_DIR/findings.json")"
 create_evidence_archive "$OUT_DIR"
 log_info "Output written to $OUT_DIR"
-

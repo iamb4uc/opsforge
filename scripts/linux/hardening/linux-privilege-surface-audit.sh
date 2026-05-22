@@ -47,7 +47,17 @@ safe_run "$OUT_DIR/raw/groups.txt" getent group
 safe_run "$OUT_DIR/raw/path-permissions.txt" sh -c 'printf "%s\n" "$PATH" | tr ":" "\n" | while read -r d; do [ -n "$d" ] && [ -e "$d" ] && stat -c "%A %U %G %n" "$d"; done'
 safe_run "$OUT_DIR/raw/capabilities.txt" sh -c 'command -v getcap >/dev/null 2>&1 && getcap -r / 2>/dev/null || true'
 safe_run "$OUT_DIR/raw/suid-sgid.txt" sh -c 'find / -xdev \( -perm -4000 -o -perm -2000 \) -type f -printf "%m %u %g %p\n" 2>/dev/null'
-safe_run "$OUT_DIR/raw/writable-cron-systemd.txt" sh -c 'find /etc/cron* /var/spool/cron /etc/systemd/system -type f -writable -print 2>/dev/null || true'
+safe_run "$OUT_DIR/raw/writable-scheduled-service-paths.txt" bash -c '
+{
+  find /etc/cron* /var/spool/cron -type f -writable -print 2>/dev/null || true
+  for path in /etc/systemd/system /usr/lib/systemd/system /lib/systemd/system \
+    /etc/runit /etc/sv /var/service /service /etc/service \
+    /etc/init.d /etc/conf.d /etc/runlevels; do
+    [ -e "$path" ] || continue
+    find "$path" -type f -writable -print 2>/dev/null || true
+  done
+} | sort -u
+'
 safe_run "$OUT_DIR/raw/home-permissions.txt" sh -c 'find /home -maxdepth 1 -type d -printf "%m %u %g %p\n" 2>/dev/null || true'
 
 grep -Rni 'NOPASSWD' /etc/sudoers /etc/sudoers.d 2>/dev/null > "$OUT_DIR/normalized/nopasswd-rules.txt" || true
@@ -76,4 +86,3 @@ cp "$OUT_DIR/findings.json" "$OUT_DIR/normalized/findings.json"
 write_basic_summary "$OUT_DIR/summary.txt" "Linux privilege surface audit" "$OUT_DIR" "$(count_findings "$OUT_DIR/findings.json")"
 create_evidence_archive "$OUT_DIR"
 log_info "Output written to $OUT_DIR"
-

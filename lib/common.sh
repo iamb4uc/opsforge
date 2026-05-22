@@ -38,6 +38,22 @@ opsforge_make_output_dir() {
   printf '%s\n' "$dir"
 }
 
+opsforge_init_paths() {
+  printf '%s\n' \
+    /etc/systemd/system \
+    /usr/lib/systemd/system \
+    /lib/systemd/system \
+    "$HOME/.config/systemd/user" \
+    /etc/runit \
+    /etc/sv \
+    /var/service \
+    /service \
+    /etc/service \
+    /etc/init.d \
+    /etc/conf.d \
+    /etc/runlevels
+}
+
 json_escape() {
   local s="${1-}"
   s="${s//\\/\\\\}"
