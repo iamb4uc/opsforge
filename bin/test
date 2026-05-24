@@ -91,6 +91,27 @@ assert_contracts_under() {
   say "validated output contracts=$count"
 }
 
+assert_init_marker() {
+  local expected="${OPSFORGE_EXPECT_INIT:-}"
+  local triage_dir services_file marker
+  [ -n "$expected" ] || return 0
+  triage_dir="$(latest_output_dir "$LINUX_FEASIBILITY_ROOT" linux-triage-collector)"
+  [ -n "$triage_dir" ] || fail "triage output directory not found for init assertion"
+  services_file="$triage_dir/raw/services.txt"
+  assert_file "$services_file"
+
+  case "$expected" in
+    systemd) marker='systemd' ;;
+    runit) marker='runit' ;;
+    openrc) marker='openrc' ;;
+    *) fail "unknown OPSFORGE_EXPECT_INIT value: $expected" ;;
+  esac
+
+  grep -Eiq -- "$marker" "$services_file" ||
+    fail "expected $expected marker in triage services evidence: $services_file"
+  say "init marker matched: $expected"
+}
+
 run_runtime_linux_one() {
   local name="$1"
   local script_name="$2"
@@ -267,6 +288,7 @@ test_linux_feasibility() {
   printf 'test\n' > "$cfg/test.log"
 
   run_one triage "$ROOT/bin/opsforge" linux triage --output "$LINUX_FEASIBILITY_ROOT"
+  assert_init_marker
   run_one persistence "$ROOT/bin/opsforge" linux persistence --output "$LINUX_FEASIBILITY_ROOT"
   run_one deleted "$ROOT/bin/opsforge" linux deleted-binaries --output "$LINUX_FEASIBILITY_ROOT"
   run_one proc-tree "$ROOT/bin/opsforge" linux proc-tree --output "$LINUX_FEASIBILITY_ROOT"
