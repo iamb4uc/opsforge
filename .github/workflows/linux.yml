@@ -118,7 +118,9 @@ jobs:
             exit 1
           fi
 
-          OPSFORGE_TEST_OUTPUT=/repo/.ci-artifacts bash ./bin/test linux-feasibility
+          OPSFORGE_EXPECT_INIT="${{ matrix.init }}" \
+            OPSFORGE_TEST_OUTPUT=/repo/.ci-artifacts \
+            bash ./bin/test linux-feasibility
           CONTAINER
 
       - name: upload feasibility artifacts
