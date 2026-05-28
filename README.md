@@ -57,6 +57,38 @@ Windows:
 
 ## Commands
 
+Install on Linux/Unix:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/iamb4uc/opsforge/main/install.sh -o /tmp/opsforge-install && bash /tmp/opsforge-install
+```
+
+By default, root installs put the command in `/usr/local/bin/opsforge` and the
+tool files in `/opt/opsforge`. Non-root installs use `~/.local/bin/opsforge`
+and `~/.local/share/opsforge`.
+
+Check the host first:
+
+```bash
+./bin/opsforge doctor
+./bin/opsforge linux doctor
+```
+
+```powershell
+.\bin\opsforge.ps1 doctor
+.\bin\opsforge.ps1 windows doctor
+```
+
+Run the main safe collection set:
+
+```bash
+./bin/opsforge linux all --output ./output --markdown --json
+```
+
+```powershell
+.\bin\opsforge.ps1 windows all -OutputPath .\output -Json -Markdown
+```
+
 Linux:
 
 ```bash

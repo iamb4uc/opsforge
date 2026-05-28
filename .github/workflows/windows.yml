@@ -77,6 +77,14 @@ jobs:
         shell: pwsh
         run: .\bin\test.ps1 runtime
 
+      - name: doctor
+        shell: pwsh
+        run: .\bin\opsforge.ps1 doctor
+
+      - name: windows all
+        shell: pwsh
+        run: .\bin\opsforge.ps1 windows all -OutputPath .\output -Json -Markdown
+
       - name: upload windows artifacts on failure
         if: failure()
         uses: actions/upload-artifact@v4

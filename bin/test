@@ -19,6 +19,7 @@ Usage:
   bin/test linux-feasibility
   bin/test runtime-linux
   bin/test readability
+  bin/test installer
   bin/test all
 
 Runs local validation for opsforge. The tests are read-only against the host and
@@ -65,6 +66,17 @@ assert_text() {
   local file="$1"
   local pattern="$2"
   grep -F "$pattern" "$file" >/dev/null 2>&1 || fail "expected '$pattern' in $file"
+}
+
+assert_bash_header() {
+  local file="$1"
+  local first second third
+  first="$(sed -n '1p' "$file")"
+  second="$(sed -n '2p' "$file")"
+  third="$(sed -n '3p' "$file")"
+  [ "$first" = '#!/usr/bin/env bash' ] || fail "bad bash shebang: $file"
+  [ "$second" = 'set -Eeuo pipefail' ] || fail "missing bash safety flags on line 2: $file"
+  [ "$third" = "IFS=\$'\\n\\t'" ] || fail "missing bash IFS on line 3: $file"
 }
 
 latest_output_dir() {
@@ -128,8 +140,18 @@ run_runtime_linux_one() {
 test_syntax() {
   say "checking bash syntax"
   while IFS= read -r file; do
+    case "$file" in
+      "$ROOT/bin/"*|"$ROOT/scripts/linux/"*|"$ROOT/install.sh") assert_bash_header "$file" ;;
+    esac
     bash -n "$file"
-  done < <(find "$ROOT/bin" "$ROOT/lib" "$ROOT/scripts" -type f \( -name '*.sh' -o -name opsforge -o -name test \) | sort)
+  done < <(
+    {
+      find "$ROOT/bin" "$ROOT/lib" "$ROOT/scripts" -type f \( \
+        -name '*.sh' -o -name opsforge -o -name test -o -name validate-output-contract \
+      \)
+      printf '%s\n' "$ROOT/install.sh"
+    } | sort
+  )
 }
 
 test_help() {
@@ -137,6 +159,10 @@ test_help() {
   while IFS= read -r file; do
     "$file" --help >/dev/null
   done < <(find "$ROOT/scripts/linux" -type f -name '*.sh' | sort)
+  "$ROOT/bin/opsforge" --help >/dev/null
+  "$ROOT/bin/test" --help >/dev/null
+  "$ROOT/bin/validate-output-contract" --help >/dev/null
+  "$ROOT/install.sh" --help >/dev/null
   "$ROOT/bin/opsforge" >/dev/null 2>&1 && fail "opsforge without arguments should exit non-zero"
   [ "$?" -eq 2 ] || fail "opsforge without arguments should exit 2"
 }
@@ -200,7 +226,10 @@ test_wrapper_targets() {
   while IFS= read -r target; do
     target="${target//\\//}"
     [ -f "$ROOT/$target" ] || fail "PowerShell wrapper references missing script: $target"
-  done < <(sed -n 's/.*Join-Path \$Root '"'"'\([^'"'"']*\)'"'"'.*/\1/p' "$ROOT/bin/opsforge.ps1" | sort)
+  done < <(
+    sed -n 's/.*Join-Path \$Root '"'"'\(scripts[^'"'"']*\.ps1\)'"'"'.*/\1/p' "$ROOT/bin/opsforge.ps1" |
+      sort
+  )
 }
 
 test_script_catalog() {
@@ -219,6 +248,27 @@ test_script_catalog() {
 test_output_contract() {
   say "checking output contract fixture"
   "$ROOT/bin/validate-output-contract" "$ROOT/tests/fixtures/output-contract-valid" >/dev/null
+}
+
+test_installer() {
+  say "checking installer"
+  local run_dir prefix app_dir bin_dir
+  run_dir="$(make_run_dir installer)"
+  prefix="$run_dir/usr"
+  app_dir="$run_dir/opt/opsforge"
+  bin_dir="$prefix/bin"
+
+  "$ROOT/install.sh" \
+    --source "$ROOT" \
+    --prefix "$prefix" \
+    --app-dir "$app_dir" \
+    --bin-dir "$bin_dir" \
+    --force >/dev/null
+
+  assert_file "$app_dir/bin/opsforge"
+  assert_file "$bin_dir/opsforge"
+  "$bin_dir/opsforge" --help >/dev/null
+  OPSFORGE_DOCTOR_OUTPUT="$run_dir/output" "$bin_dir/opsforge" doctor >/dev/null
 }
 
 test_linux_fixtures() {
@@ -370,6 +420,7 @@ case "${1:-}" in
   wrapper-targets) test_wrapper_targets ;;
   script-catalog) test_script_catalog ;;
   output-contract) test_output_contract ;;
+  installer) test_installer ;;
   linux-fixtures) test_linux_fixtures ;;
   linux-feasibility) test_linux_feasibility ;;
   runtime-linux) test_runtime_linux ;;
@@ -382,6 +433,7 @@ case "${1:-}" in
     test_wrapper_targets
     test_script_catalog
     test_output_contract
+    test_installer
     test_linux_fixtures
     test_linux_feasibility
     test_runtime_linux
