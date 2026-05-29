@@ -160,9 +160,10 @@ function Invoke-AllOne {
     try {
         $wrapper = Join-Path $Root 'bin\opsforge.ps1'
         & $wrapper @Arguments -OutputPath $OutputRoot -Json:$Json -Markdown:$Markdown -Quiet:$Quiet
-        if ($LASTEXITCODE) {
+        $exitCode = Get-Variable -Name LASTEXITCODE -ValueOnly -ErrorAction SilentlyContinue
+        if ($null -ne $exitCode -and $exitCode -ne 0) {
             $failed = $true
-            Write-Host ("[opsforge] failed: {0} exited with {1}" -f $Name, $LASTEXITCODE)
+            Write-Host ("[opsforge] failed: {0} exited with {1}" -f $Name, $exitCode)
         }
     } catch {
         $failed = $true
