@@ -1,7 +1,6 @@
 output/*
 !output/.gitkeep
 .ci-artifacts/
-
 *.tmp
 *.log
 *.tar.gz

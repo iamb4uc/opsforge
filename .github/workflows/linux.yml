@@ -43,6 +43,10 @@ jobs:
         shell: bash
         run: ./bin/test output-contract
 
+      - name: installer
+        shell: bash
+        run: ./bin/test installer
+
       - name: fixture checks
         shell: bash
         run: ./bin/test linux-fixtures
@@ -54,6 +58,14 @@ jobs:
       - name: runtime linux
         shell: bash
         run: ./bin/test runtime-linux
+
+      - name: doctor
+        shell: bash
+        run: ./bin/opsforge doctor
+
+      - name: linux all
+        shell: bash
+        run: ./bin/opsforge linux all --output ./output --markdown --json
 
       - name: upload shell artifacts on failure
         if: failure()

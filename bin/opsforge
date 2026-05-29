@@ -7,6 +7,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 usage() {
   cat <<'USAGE'
 Usage:
+  opsforge doctor
+  opsforge linux doctor
+  opsforge linux all [args...]
   opsforge linux triage [args...]
   opsforge linux persistence [args...]
   opsforge linux deleted-binaries [args...]
@@ -24,11 +27,206 @@ Usage:
   opsforge linux web-triage [args...]
 
 Examples:
+  opsforge doctor
+  opsforge linux all --output ./output --markdown --json
   opsforge linux triage --output ./output --markdown --json
   opsforge linux persistence --output ./output
   opsforge linux tls --targets configs/linux/tls-targets.conf
 USAGE
 }
+
+have_command() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+doctor_check_one() {
+  local name="$1"
+  local required="$2"
+
+  if have_command "$name"; then
+    printf 'ok       %s\n' "$name"
+    return 0
+  fi
+
+  if [ "$required" = "required" ]; then
+    printf 'missing  %s\n' "$name"
+    return 1
+  fi
+
+  printf 'optional %s missing\n' "$name"
+  return 0
+}
+
+detect_init_system() {
+  if [ -d /run/systemd/system ] || have_command systemctl; then
+    printf 'systemd\n'
+  elif [ -d /run/runit ] || [ -d /etc/runit ] || have_command sv; then
+    printf 'runit\n'
+  elif [ -d /run/openrc ] || have_command rc-status; then
+    printf 'openrc\n'
+  elif have_command service; then
+    printf 'sysv/service\n'
+  else
+    printf 'unknown\n'
+  fi
+}
+
+run_doctor() {
+  local failures=0
+  local output_dir="${OPSFORGE_DOCTOR_OUTPUT:-$ROOT/output}"
+
+  printf 'opsforge doctor\n'
+  printf 'root: %s\n' "$ROOT"
+  printf 'user: %s\n' "$(id -un 2>/dev/null || printf unknown)"
+  if [ "$(id -u 2>/dev/null || printf 1)" = "0" ]; then
+    printf 'privilege: root\n'
+  else
+    printf 'privilege: normal user\n'
+  fi
+  printf 'init: %s\n\n' "$(detect_init_system)"
+
+  for cmd in bash awk sed grep find stat df ps tar; do
+    doctor_check_one "$cmd" required || failures=$((failures + 1))
+  done
+
+  if have_command ss || have_command netstat; then
+    printf 'ok       ss/netstat\n'
+  else
+    printf 'missing  ss or netstat\n'
+    failures=$((failures + 1))
+  fi
+
+  if have_command ip || have_command route; then
+    printf 'ok       ip/route\n'
+  else
+    printf 'missing  ip or route\n'
+    failures=$((failures + 1))
+  fi
+
+  if have_command sha256sum || have_command shasum; then
+    printf 'ok       sha256sum/shasum\n'
+  else
+    printf 'missing  sha256sum or shasum\n'
+    failures=$((failures + 1))
+  fi
+
+  for cmd in journalctl systemctl service lsof openssl timeout; do
+    doctor_check_one "$cmd" optional || true
+  done
+
+  if [ -d "$output_dir" ] && [ -w "$output_dir" ]; then
+    printf 'ok       writable output: %s\n' "$output_dir"
+  elif [ ! -e "$output_dir" ] && [ -w "$(dirname "$output_dir")" ]; then
+    printf 'ok       output parent writable: %s\n' "$(dirname "$output_dir")"
+  else
+    printf 'warning  output path is not writable: %s\n' "$output_dir"
+  fi
+
+  return "$failures"
+}
+
+parse_output_arg() {
+  local output="./output"
+  local arg
+  while [ "$#" -gt 0 ]; do
+    arg="$1"
+    case "$arg" in
+      --output|-o)
+        shift
+        [ "$#" -gt 0 ] && output="$1"
+        ;;
+      --output=*)
+        output="${arg#--output=}"
+        ;;
+    esac
+    shift || break
+  done
+  printf '%s\n' "$output"
+}
+
+latest_output_dir() {
+  local base="$1"
+  local script_name="$2"
+  find "$base" -mindepth 1 -maxdepth 1 -type d -name "*-$script_name-*" -printf '%T@ %p\n' 2>/dev/null |
+    sort -n |
+    awk 'END {print $2}'
+}
+
+run_all_one() {
+  local label="$1"
+  local script_name="$2"
+  shift 2
+  local output_base="$1"
+  shift
+  local out_dir rc=0
+
+  printf '[opsforge] running %s\n' "$label"
+  "$@" || rc=$?
+
+  out_dir="$(latest_output_dir "$output_base" "$script_name")"
+  if [ -z "$out_dir" ]; then
+    printf '[opsforge] failed: %s did not create output\n' "$label" >&2
+    return 1
+  fi
+
+  printf '[opsforge] output: %s\n' "$out_dir"
+  if ! "$ROOT/bin/validate-output-contract" "$out_dir"; then
+    printf '[opsforge] failed: %s output contract failed\n' "$label" >&2
+    return 1
+  fi
+
+  if [ "$rc" -ne 0 ]; then
+    printf '[opsforge] failed: %s exited with %s\n' "$label" "$rc" >&2
+    return "$rc"
+  fi
+}
+
+run_linux_all() {
+  local output_base
+  local failed=0
+  output_base="$(parse_output_arg "$@")"
+  if ! mkdir -p "$output_base" 2>/dev/null || [ ! -w "$output_base" ]; then
+    output_base="${OPSFORGE_FALLBACK_OUTPUT:-$ROOT/.ci-artifacts/runtime-output}"
+    printf '[opsforge] output path is not writable; using %s\n' "$output_base" >&2
+    mkdir -p "$output_base"
+  fi
+  export OPSFORGE_FALLBACK_OUTPUT="$output_base"
+
+  run_all_one triage linux-triage-collector "$output_base" \
+    "$ROOT/bin/opsforge" linux triage "$@" || failed=1
+  run_all_one persistence linux-persistence-hunter "$output_base" \
+    "$ROOT/bin/opsforge" linux persistence "$@" || failed=1
+  run_all_one deleted-binaries deleted-binary-detector "$output_base" \
+    "$ROOT/bin/opsforge" linux deleted-binaries "$@" || failed=1
+  run_all_one disk-rca disk-pressure-rca "$output_base" \
+    "$ROOT/bin/opsforge" linux disk-rca "$@" || failed=1
+
+  if [ -f "$ROOT/configs/linux/tls-targets.conf" ]; then
+    run_all_one tls tls-inventory-scanner "$output_base" \
+      "$ROOT/bin/opsforge" linux tls --targets "$ROOT/configs/linux/tls-targets.conf" "$@" || failed=1
+  fi
+  if [ -f "$ROOT/configs/linux/network-targets.conf" ]; then
+    run_all_one net-drift network-path-drift "$output_base" \
+      "$ROOT/bin/opsforge" linux net-drift --targets "$ROOT/configs/linux/network-targets.conf" "$@" || failed=1
+  fi
+  if [ -f "$ROOT/configs/examples/log-sources.conf" ]; then
+    run_all_one log-silence log-source-silence-detector "$output_base" \
+      "$ROOT/bin/opsforge" linux log-silence --config "$ROOT/configs/examples/log-sources.conf" "$@" || failed=1
+  fi
+
+  return "$failed"
+}
+
+case "${1:-}" in
+  -h|--help)
+    usage
+    exit 0
+    ;;
+  doctor)
+    run_doctor
+    exit $?
+    ;;
+esac
 
 [ "$#" -ge 2 ] || { usage; exit 2; }
 platform="$1"
@@ -36,6 +234,8 @@ command_name="$2"
 shift 2
 
 case "$platform:$command_name" in
+  linux:doctor) run_doctor ;;
+  linux:all) run_linux_all "$@" ;;
   linux:triage) exec "$ROOT/scripts/linux/endpoint/linux-triage-collector.sh" "$@" ;;
   linux:persistence) exec "$ROOT/scripts/linux/persistence/linux-persistence-hunter.sh" "$@" ;;
   linux:deleted-binaries|linux:deleted-binary) exec "$ROOT/scripts/linux/forensic/deleted-binary-detector.sh" "$@" ;;

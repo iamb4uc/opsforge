@@ -26,6 +26,11 @@ opsforge_make_output_dir() {
   local script_name="$2"
   local host
   host="$(opsforge_hostname | tr ' /' '__')"
+  if ! mkdir -p "$base" 2>/dev/null || [ ! -w "$base" ]; then
+    base="${OPSFORGE_FALLBACK_OUTPUT:-$(opsforge_repo_root)/.ci-artifacts/runtime-output}"
+    printf '[WARN] output path is not writable; using %s\n' "$base" >&2
+    mkdir -p "$base"
+  fi
   local dir="${base%/}/${host}-${script_name}-$(opsforge_timestamp)"
   local candidate="$dir"
   local n=1
