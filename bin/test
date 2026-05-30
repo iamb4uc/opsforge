@@ -87,6 +87,14 @@ latest_output_dir() {
     awk 'END {print $2}'
 }
 
+latest_profile_dir() {
+  local base="$1"
+  local profile="$2"
+  find "$base" -mindepth 1 -maxdepth 1 -type d -name "opsforge-linux-$profile-*" -printf '%T@ %p\n' |
+    sort -n |
+    awk 'END {print $2}'
+}
+
 assert_output_contract() {
   local out_dir="$1"
   "$ROOT/bin/validate-output-contract" "$out_dir" >/dev/null
@@ -135,6 +143,20 @@ run_runtime_linux_one() {
   [ -n "$out_dir" ] || fail "$name did not create an output directory"
   printf '[test] runtime-linux output: %s\n' "$out_dir"
   "$ROOT/bin/validate-output-contract" "$out_dir"
+}
+
+run_runtime_linux_profile() {
+  local profile="$1"
+  shift
+  say "runtime-linux profile: $profile"
+  "$@"
+  local out_dir
+  out_dir="$(latest_profile_dir "$OPSFORGE_RUNTIME_OUTPUT_DIR" "$profile")"
+  [ -n "$out_dir" ] || fail "$profile profile did not create a parent output directory"
+  printf '[test] runtime-linux profile output: %s\n' "$out_dir"
+  assert_nonempty_file "$out_dir/run-summary.md"
+  assert_nonempty_file "$out_dir/run-summary.json"
+  assert_contracts_under "$out_dir"
 }
 
 test_syntax() {
@@ -377,6 +399,8 @@ test_runtime_linux() {
   export OPSFORGE_RUNTIME_OUTPUT_DIR
   mkdir -p "$OPSFORGE_RUNTIME_OUTPUT_DIR"
 
+  "$ROOT/bin/opsforge" doctor >/dev/null
+
   run_runtime_linux_one \
     triage \
     linux-triage-collector \
@@ -409,6 +433,21 @@ test_runtime_linux() {
       --targets "$ROOT/configs/linux/tls-targets.conf" \
       --output "$OPSFORGE_RUNTIME_OUTPUT_DIR" --markdown --json
   fi
+
+  run_runtime_linux_profile \
+    quick \
+    "$ROOT/bin/opsforge" linux quick \
+    --output "$OPSFORGE_RUNTIME_OUTPUT_DIR" --markdown --json
+
+  run_runtime_linux_profile \
+    ir \
+    "$ROOT/bin/opsforge" linux ir \
+    --output "$OPSFORGE_RUNTIME_OUTPUT_DIR" --markdown --json
+
+  run_runtime_linux_profile \
+    noc \
+    "$ROOT/bin/opsforge" linux noc \
+    --output "$OPSFORGE_RUNTIME_OUTPUT_DIR" --markdown --json
 }
 
 case "${1:-}" in
