@@ -152,3 +152,37 @@ safe_run() {
 command_exists() {
   command -v "$1" >/dev/null 2>&1
 }
+
+opsforge_allowlist_file() {
+  local name="$1"
+  printf '%s/configs/linux/allowlist-%s.conf\n' "$(opsforge_repo_root)" "$name"
+}
+
+opsforge_is_allowlisted() {
+  local name="$1"
+  local value="$2"
+  local file entry
+  file="$(opsforge_allowlist_file "$name")"
+  [ -r "$file" ] || return 1
+
+  while IFS= read -r entry || [ -n "$entry" ]; do
+    case "$entry" in
+      ''|'#'*) continue ;;
+    esac
+    case "$value" in
+      *"$entry"*) return 0 ;;
+    esac
+  done < "$file"
+
+  return 1
+}
+
+opsforge_reduced_severity() {
+  case "$1" in
+    critical) printf 'high\n' ;;
+    high) printf 'medium\n' ;;
+    medium) printf 'low\n' ;;
+    low) printf 'info\n' ;;
+    *) printf 'info\n' ;;
+  esac
+}
