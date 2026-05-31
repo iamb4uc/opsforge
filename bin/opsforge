@@ -7,9 +7,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 usage() {
   cat <<'USAGE'
 Usage:
-  opsforge doctor
+  opsforge doctor [--output DIR]
   opsforge clean --dry-run [--output DIR]
-  opsforge linux doctor
+  opsforge linux doctor [--output DIR]
   opsforge linux all [args...]
   opsforge linux triage [args...]
   opsforge linux persistence [args...]
@@ -59,6 +59,25 @@ doctor_check_one() {
   return 0
 }
 
+detect_os() {
+  if [ -r /etc/os-release ]; then
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    printf '%s\n' "${PRETTY_NAME:-${NAME:-unknown}}"
+  else
+    uname -sr 2>/dev/null || printf 'unknown\n'
+  fi
+}
+
+detect_shell() {
+  local shell_name="${SHELL:-unknown}"
+  if [ -n "${BASH_VERSION:-}" ]; then
+    printf '%s (bash %s)\n' "$shell_name" "$BASH_VERSION"
+  else
+    printf '%s\n' "$shell_name"
+  fi
+}
+
 detect_init_system() {
   if [ -d /run/systemd/system ] || have_command systemctl; then
     printf 'systemd\n'
@@ -76,53 +95,84 @@ detect_init_system() {
 run_doctor() {
   local failures=0
   local output_dir="${OPSFORGE_DOCTOR_OUTPUT:-$ROOT/output}"
+  local init_system is_root_status output_status limitations=()
+
+  output_dir="$(parse_output_arg "$@")"
+  if [ "$output_dir" = "./output" ] && [ -n "${OPSFORGE_DOCTOR_OUTPUT:-}" ]; then
+    output_dir="$OPSFORGE_DOCTOR_OUTPUT"
+  fi
+  init_system="$(detect_init_system)"
 
   printf 'opsforge doctor\n'
+  printf 'os: %s\n' "$(detect_os)"
+  printf 'shell: %s\n' "$(detect_shell)"
+  printf 'init: %s\n' "$init_system"
   printf 'root: %s\n' "$ROOT"
   printf 'user: %s\n' "$(id -un 2>/dev/null || printf unknown)"
   if [ "$(id -u 2>/dev/null || printf 1)" = "0" ]; then
-    printf 'privilege: root\n'
+    is_root_status="root"
   else
-    printf 'privilege: normal user\n'
+    is_root_status="normal user"
+    limitations+=("not running as root; some host data may be partial")
   fi
-  printf 'init: %s\n\n' "$(detect_init_system)"
+  printf 'privilege: %s\n' "$is_root_status"
 
+  printf '\ncore dependencies:\n'
   for cmd in bash awk sed grep find stat df ps tar; do
     doctor_check_one "$cmd" required || failures=$((failures + 1))
   done
 
-  if have_command ss || have_command netstat; then
-    printf 'ok       ss/netstat\n'
-  else
-    printf 'missing  ss or netstat\n'
-    failures=$((failures + 1))
-  fi
-
-  if have_command ip || have_command route; then
-    printf 'ok       ip/route\n'
-  else
-    printf 'missing  ip or route\n'
-    failures=$((failures + 1))
-  fi
-
-  if have_command sha256sum || have_command shasum; then
-    printf 'ok       sha256sum/shasum\n'
-  else
-    printf 'missing  sha256sum or shasum\n'
-    failures=$((failures + 1))
-  fi
-
-  for cmd in journalctl systemctl service lsof openssl timeout; do
+  printf '\noptional dependencies:\n'
+  for cmd in ss netstat ip route journalctl systemctl service lsof openssl timeout sha256sum shasum; do
     doctor_check_one "$cmd" optional || true
   done
 
+  printf '\noutput:\n'
   if [ -d "$output_dir" ] && [ -w "$output_dir" ]; then
+    output_status="writable"
     printf 'ok       writable output: %s\n' "$output_dir"
   elif [ ! -e "$output_dir" ] && [ -w "$(dirname "$output_dir")" ]; then
+    output_status="parent writable"
     printf 'ok       output parent writable: %s\n' "$(dirname "$output_dir")"
   else
+    output_status="not writable"
     printf 'warning  output path is not writable: %s\n' "$output_dir"
+    limitations+=("requested output path is not writable")
   fi
+
+  if ! have_command ss && ! have_command netstat; then
+    limitations+=("network socket collection will be limited without ss or netstat")
+  fi
+  if ! have_command ip && ! have_command route; then
+    limitations+=("route and interface collection will be limited without ip or route")
+  fi
+  if ! have_command journalctl; then
+    limitations+=("journal collection is unavailable without journalctl")
+  fi
+  if [ "$init_system" != "systemd" ] && ! have_command systemctl; then
+    limitations+=("systemd checks are skipped on this host")
+  fi
+  if [ "$init_system" = "runit" ]; then
+    limitations+=("runit host detected; systemd-only service evidence is skipped")
+  elif [ "$init_system" = "openrc" ]; then
+    limitations+=("OpenRC host detected; systemd-only service evidence is skipped")
+  elif [ "$init_system" = "unknown" ]; then
+    limitations+=("init system is unknown; service collection may be partial")
+  fi
+  if ! have_command lsof; then
+    limitations+=("deleted-but-open file evidence is limited without lsof")
+  fi
+
+  printf '\nknown limitations:\n'
+  if [ "${#limitations[@]}" -eq 0 ]; then
+    printf 'none obvious\n'
+  else
+    printf -- '- %s\n' "${limitations[@]}"
+  fi
+
+  printf '\nsummary:\n'
+  printf 'core failures: %s\n' "$failures"
+  printf 'output status: %s\n' "$output_status"
 
   return "$failures"
 }
@@ -289,7 +339,8 @@ case "${1:-}" in
     exit 0
     ;;
   doctor)
-    run_doctor
+    shift
+    run_doctor "$@"
     exit $?
     ;;
   clean)
@@ -305,7 +356,7 @@ command_name="$2"
 shift 2
 
 case "$platform:$command_name" in
-  linux:doctor) run_doctor ;;
+  linux:doctor) run_doctor "$@" ;;
   linux:all) run_linux_all "$@" ;;
   linux:triage) exec "$ROOT/scripts/linux/endpoint/linux-triage-collector.sh" "$@" ;;
   linux:persistence) exec "$ROOT/scripts/linux/persistence/linux-persistence-hunter.sh" "$@" ;;

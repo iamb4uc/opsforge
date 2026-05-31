@@ -72,16 +72,31 @@ else
     [ -n "$path" ] || continue
     severity="medium"
     case "$path" in /bin/*|/sbin/*|/usr/bin/*|/usr/sbin/*) severity="low" ;; *) severity="high" ;; esac
+    title="New SUID/SGID file detected"
+    recommendation="Validate package ownership, hash, and change approval."
+    if opsforge_is_allowlisted suid "$path" || opsforge_is_allowlisted paths "$path"; then
+      severity="$(opsforge_reduced_severity "$severity")"
+      title="$title (allowlisted)"
+      recommendation="$recommendation This matched an allowlist; verify the entry is still wanted."
+    fi
     write_finding_json "$TMP_FINDINGS" "LINUX-SUID-NEW-$(printf '%s' "$path" | cksum | awk '{print $1}')" \
-      "New SUID/SGID file detected" "$severity" "$HOST" "hardening" "$path" \
-      "Validate package ownership, hash, and change approval."
+      "$title" "$severity" "$HOST" "hardening" "$path" \
+      "$recommendation"
   done < "$OUT_DIR/raw/new-privileged-files.txt"
   awk -F '\t' '$1 ~ /7..|.7.|..7/ {print}' "$CURRENT" > "$OUT_DIR/raw/world-writable-privileged-files.txt"
   while IFS= read -r line; do
     [ -n "$line" ] || continue
+    severity="critical"
+    title="World-writable privileged file"
+    recommendation="Remove write permissions immediately and investigate file provenance."
+    if opsforge_is_allowlisted suid "$line" || opsforge_is_allowlisted paths "$line"; then
+      severity="$(opsforge_reduced_severity "$severity")"
+      title="$title (allowlisted)"
+      recommendation="$recommendation This matched an allowlist; verify the entry is still wanted."
+    fi
     write_finding_json "$TMP_FINDINGS" "LINUX-SUID-WW-$(printf '%s' "$line" | cksum | awk '{print $1}')" \
-      "World-writable privileged file" "critical" "$HOST" "hardening" "$line" \
-      "Remove write permissions immediately and investigate file provenance."
+      "$title" "$severity" "$HOST" "hardening" "$line" \
+      "$recommendation"
   done < "$OUT_DIR/raw/world-writable-privileged-files.txt"
 fi
 

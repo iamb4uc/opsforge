@@ -63,17 +63,41 @@ safe_run "$OUT_DIR/raw/home-permissions.txt" sh -c 'find /home -maxdepth 1 -type
 grep -Rni 'NOPASSWD' /etc/sudoers /etc/sudoers.d 2>/dev/null > "$OUT_DIR/normalized/nopasswd-rules.txt" || true
 while IFS= read -r line; do
   [ -n "$line" ] || continue
-  write_finding_json "$TMP_FINDINGS" "LINUX-PRIV-NOPASSWD-$(printf '%s' "$line" | cksum | awk '{print $1}')" "sudo NOPASSWD rule present" "medium" "$HOST" "hardening" "$line" "Validate whether passwordless sudo is required and restrict command scope."
+  severity="medium"
+  title="sudo NOPASSWD rule present"
+  recommendation="Validate whether passwordless sudo is required and restrict command scope."
+  if opsforge_is_allowlisted users "$line"; then
+    severity="$(opsforge_reduced_severity "$severity")"
+    title="$title (allowlisted)"
+    recommendation="$recommendation This matched allowlist-users.conf; verify the entry is still wanted."
+  fi
+  write_finding_json "$TMP_FINDINGS" "LINUX-PRIV-NOPASSWD-$(printf '%s' "$line" | cksum | awk '{print $1}')" "$title" "$severity" "$HOST" "hardening" "$line" "$recommendation"
 done < "$OUT_DIR/normalized/nopasswd-rules.txt"
 
 awk -F: '$1=="docker" || $1=="lxd" {print}' "$OUT_DIR/raw/groups.txt" | while IFS= read -r line; do
   members="${line##*:}"
   [ -n "$members" ] || continue
-  write_finding_json "$TMP_FINDINGS" "LINUX-PRIV-GROUP-$(printf '%s' "$line" | cksum | awk '{print $1}')" "Privileged container group has users" "high" "$HOST" "hardening" "$line" "Review Docker/LXD group membership as root-equivalent access."
+  severity="high"
+  title="Privileged container group has users"
+  recommendation="Review Docker/LXD group membership as root-equivalent access."
+  if opsforge_is_allowlisted users "$line"; then
+    severity="$(opsforge_reduced_severity "$severity")"
+    title="$title (allowlisted)"
+    recommendation="$recommendation This matched allowlist-users.conf; verify the entry is still wanted."
+  fi
+  write_finding_json "$TMP_FINDINGS" "LINUX-PRIV-GROUP-$(printf '%s' "$line" | cksum | awk '{print $1}')" "$title" "$severity" "$HOST" "hardening" "$line" "$recommendation"
 done
 
 awk '$1 ~ /^..w|^.....w|^........w/ {print}' "$OUT_DIR/raw/path-permissions.txt" | while IFS= read -r line; do
-  write_finding_json "$TMP_FINDINGS" "LINUX-PRIV-PATH-$(printf '%s' "$line" | cksum | awk '{print $1}')" "Writable PATH directory" "high" "$HOST" "hardening" "$line" "Remove write access from PATH directories or remove them from privileged execution paths."
+  severity="high"
+  title="Writable PATH directory"
+  recommendation="Remove write access from PATH directories or remove them from privileged execution paths."
+  if opsforge_is_allowlisted paths "$line"; then
+    severity="$(opsforge_reduced_severity "$severity")"
+    title="$title (allowlisted)"
+    recommendation="$recommendation This matched allowlist-paths.conf; verify the entry is still wanted."
+  fi
+  write_finding_json "$TMP_FINDINGS" "LINUX-PRIV-PATH-$(printf '%s' "$line" | cksum | awk '{print $1}')" "$title" "$severity" "$HOST" "hardening" "$line" "$recommendation"
 done
 
 finalize_findings_json "$TMP_FINDINGS" "$OUT_DIR/findings.json"
