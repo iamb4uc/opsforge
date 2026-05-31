@@ -10,6 +10,10 @@ Usage:
   opsforge doctor [--output DIR]
   opsforge clean --dry-run [--output DIR]
   opsforge linux doctor [--output DIR]
+  opsforge linux quick [args...]
+  opsforge linux ir [args...]
+  opsforge linux noc [args...]
+  opsforge linux full [args...]
   opsforge linux all [args...]
   opsforge linux triage [args...]
   opsforge linux persistence [args...]
@@ -30,6 +34,7 @@ Usage:
 Examples:
   opsforge doctor
   opsforge clean --dry-run --output ./output
+  opsforge linux quick --output ./output --markdown --json
   opsforge linux all --output ./output --markdown --json
   opsforge linux triage --output ./output --markdown --json
   opsforge linux persistence --output ./output
@@ -260,6 +265,20 @@ USAGE
   fi
 }
 
+timestamp_utc() {
+  date -u '+%Y-%m-%dT%H:%M:%SZ'
+}
+
+timestamp_compact() {
+  date '+%Y%m%d-%H%M%S'
+}
+
+host_slug() {
+  hostname 2>/dev/null |
+    tr ' /' '__' |
+    tr -cd 'A-Za-z0-9._-'
+}
+
 latest_output_dir() {
   local base="$1"
   local script_name="$2"
@@ -268,7 +287,63 @@ latest_output_dir() {
     awk 'END {print $2}'
 }
 
-run_all_one() {
+json_escape() {
+  local s="${1-}"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  s="${s//$'\n'/\\n}"
+  s="${s//$'\r'/\\r}"
+  s="${s//$'\t'/\\t}"
+  printf '%s' "$s"
+}
+
+profile_add_result() {
+  local label="$1"
+  local status="$2"
+  local out_dir="$3"
+  local contract="$4"
+  PROFILE_RESULTS+=("${label}|${status}|${out_dir}|${contract}")
+}
+
+profile_add_skip() {
+  local label="$1"
+  local reason="$2"
+  PROFILE_SKIPPED+=("${label}|${reason}")
+  printf '[opsforge] skipped %s: %s\n' "$label" "$reason"
+}
+
+make_profile_args() {
+  local output_dir="$1"
+  shift
+  local saw_output=0
+  PROFILE_ARGS=()
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --output|-o)
+        saw_output=1
+        shift
+        [ "$#" -gt 0 ] && shift
+        PROFILE_ARGS+=(--output "$output_dir")
+        ;;
+      --output=*)
+        saw_output=1
+        shift
+        PROFILE_ARGS+=(--output "$output_dir")
+        ;;
+      *)
+        PROFILE_ARGS+=("$1")
+        shift
+        ;;
+    esac
+  done
+
+  if [ "$saw_output" -eq 0 ]; then
+    PROFILE_ARGS+=(--output "$output_dir")
+  fi
+}
+
+run_profile_one() {
   local label="$1"
   local script_name="$2"
   shift 2
@@ -282,55 +357,238 @@ run_all_one() {
   out_dir="$(latest_output_dir "$output_base" "$script_name")"
   if [ -z "$out_dir" ]; then
     printf '[opsforge] failed: %s did not create output\n' "$label" >&2
+    profile_add_result "$label" "failed" "" "missing-output"
     return 1
   fi
 
   printf '[opsforge] output: %s\n' "$out_dir"
   if ! "$ROOT/bin/validate-output-contract" "$out_dir"; then
     printf '[opsforge] failed: %s output contract failed\n' "$label" >&2
+    profile_add_result "$label" "failed" "$out_dir" "failed"
     return 1
   fi
 
   if [ "$rc" -ne 0 ]; then
     printf '[opsforge] failed: %s exited with %s\n' "$label" "$rc" >&2
+    profile_add_result "$label" "failed" "$out_dir" "passed"
     return "$rc"
   fi
+
+  profile_add_result "$label" "passed" "$out_dir" "passed"
 }
 
-run_linux_all() {
-  local output_base
-  local failed=0
+run_profile_doctor() {
+  local parent_dir="$1"
+  local doctor_file="$parent_dir/doctor.txt"
+
+  printf '[opsforge] running doctor\n'
+  if run_doctor --output "$parent_dir" > "$doctor_file"; then
+    printf '[opsforge] output: %s\n' "$doctor_file"
+    profile_add_result "doctor" "passed" "$doctor_file" "not-applicable"
+    return 0
+  fi
+
+  printf '[opsforge] failed: doctor failed\n' >&2
+  profile_add_result "doctor" "failed" "$doctor_file" "not-applicable"
+  return 1
+}
+
+write_profile_summary() {
+  local parent_dir="$1"
+  local profile="$2"
+  local host="$3"
+  local started="$4"
+  local ended="$5"
+  local failed="$6"
+  local summary_md="$parent_dir/run-summary.md"
+  local summary_json="$parent_dir/run-summary.json"
+  local entry first=1 label status out_dir contract skip_reason
+
+  {
+    printf '# opsforge linux %s\n\n' "$profile"
+    printf 'Host: %s\n\n' "$host"
+    printf 'Started: %s\n\n' "$started"
+    printf 'Ended: %s\n\n' "$ended"
+    printf 'Failed tools: %s\n\n' "$failed"
+    printf '## Tools\n\n'
+    printf '| Tool | Status | Contract | Output |\n'
+    printf '| --- | --- | --- | --- |\n'
+    for entry in "${PROFILE_RESULTS[@]}"; do
+      IFS='|' read -r label status out_dir contract <<< "$entry"
+      printf '| %s | %s | %s | %s |\n' "$label" "$status" "$contract" "${out_dir:-none}"
+    done
+    printf '\n## Skipped\n\n'
+    if [ "${#PROFILE_SKIPPED[@]}" -eq 0 ]; then
+      printf 'None.\n\n'
+    else
+      for entry in "${PROFILE_SKIPPED[@]}"; do
+        IFS='|' read -r label skip_reason <<< "$entry"
+        printf -- '- %s: %s\n' "$label" "$skip_reason"
+      done
+      printf '\n'
+    fi
+    printf '## Next Steps\n\n'
+    if [ "$failed" -gt 0 ]; then
+      printf '%s\n' '- Review failed tool output and rerun that tool directly with --verbose.'
+    else
+      printf '%s\n' '- Review findings.json and report.md files for each tool output.'
+    fi
+  } > "$summary_md"
+
+  {
+    printf '{\n'
+    printf '  "host": "%s",\n' "$(json_escape "$host")"
+    printf '  "profile": "%s",\n' "$(json_escape "$profile")"
+    printf '  "started_at": "%s",\n' "$(json_escape "$started")"
+    printf '  "ended_at": "%s",\n' "$(json_escape "$ended")"
+    printf '  "failed_tools": %s,\n' "$failed"
+    printf '  "tools": [\n'
+    first=1
+    for entry in "${PROFILE_RESULTS[@]}"; do
+      IFS='|' read -r label status out_dir contract <<< "$entry"
+      [ "$first" -eq 1 ] || printf ',\n'
+      first=0
+      printf '    {"name":"%s","status":"%s","output":"%s","contract":"%s"}' \
+        "$(json_escape "$label")" \
+        "$(json_escape "$status")" \
+        "$(json_escape "$out_dir")" \
+        "$(json_escape "$contract")"
+    done
+    printf '\n  ],\n'
+    printf '  "skipped": [\n'
+    first=1
+    for entry in "${PROFILE_SKIPPED[@]}"; do
+      IFS='|' read -r label skip_reason <<< "$entry"
+      [ "$first" -eq 1 ] || printf ',\n'
+      first=0
+      printf '    {"name":"%s","reason":"%s"}' \
+        "$(json_escape "$label")" \
+        "$(json_escape "$skip_reason")"
+    done
+    printf '\n  ]\n'
+    printf '}\n'
+  } > "$summary_json"
+}
+
+run_linux_profile() {
+  local profile="$1"
+  shift
+  local output_base parent_dir host started ended failed=0
+  PROFILE_RESULTS=()
+  PROFILE_SKIPPED=()
+
   output_base="$(parse_output_arg "$@")"
   if ! mkdir -p "$output_base" 2>/dev/null || [ ! -w "$output_base" ]; then
     output_base="${OPSFORGE_FALLBACK_OUTPUT:-$ROOT/.ci-artifacts/runtime-output}"
     printf '[opsforge] output path is not writable; using %s\n' "$output_base" >&2
     mkdir -p "$output_base"
   fi
-  export OPSFORGE_FALLBACK_OUTPUT="$output_base"
+  host="$(host_slug)"
+  [ -n "$host" ] || host="unknown-host"
+  parent_dir="${output_base%/}/opsforge-linux-${profile}-${host}-$(timestamp_compact)"
+  mkdir -p "$parent_dir"
+  export OPSFORGE_FALLBACK_OUTPUT="$parent_dir"
+  make_profile_args "$parent_dir" "$@"
+  started="$(timestamp_utc)"
 
-  run_all_one triage linux-triage-collector "$output_base" \
-    "$ROOT/bin/opsforge" linux triage "$@" || failed=1
-  run_all_one persistence linux-persistence-hunter "$output_base" \
-    "$ROOT/bin/opsforge" linux persistence "$@" || failed=1
-  run_all_one deleted-binaries deleted-binary-detector "$output_base" \
-    "$ROOT/bin/opsforge" linux deleted-binaries "$@" || failed=1
-  run_all_one disk-rca disk-pressure-rca "$output_base" \
-    "$ROOT/bin/opsforge" linux disk-rca "$@" || failed=1
+  case "$profile" in
+    quick)
+      run_profile_doctor "$parent_dir" || failed=$((failed + 1))
+      run_profile_one triage linux-triage-collector "$parent_dir" \
+        "$ROOT/bin/opsforge" linux triage "${PROFILE_ARGS[@]}" || failed=$((failed + 1))
+      run_profile_one disk-rca disk-pressure-rca "$parent_dir" \
+        "$ROOT/bin/opsforge" linux disk-rca "${PROFILE_ARGS[@]}" || failed=$((failed + 1))
+      ;;
+    ir)
+      run_profile_one triage linux-triage-collector "$parent_dir" \
+        "$ROOT/bin/opsforge" linux triage "${PROFILE_ARGS[@]}" || failed=$((failed + 1))
+      run_profile_one persistence linux-persistence-hunter "$parent_dir" \
+        "$ROOT/bin/opsforge" linux persistence "${PROFILE_ARGS[@]}" || failed=$((failed + 1))
+      run_profile_one deleted-binaries deleted-binary-detector "$parent_dir" \
+        "$ROOT/bin/opsforge" linux deleted-binaries "${PROFILE_ARGS[@]}" || failed=$((failed + 1))
+      run_profile_one timeline timeline-builder "$parent_dir" \
+        "$ROOT/bin/opsforge" linux timeline "${PROFILE_ARGS[@]}" || failed=$((failed + 1))
+      ;;
+    noc)
+      run_profile_doctor "$parent_dir" || failed=$((failed + 1))
+      run_profile_one disk-rca disk-pressure-rca "$parent_dir" \
+        "$ROOT/bin/opsforge" linux disk-rca "${PROFILE_ARGS[@]}" || failed=$((failed + 1))
+      if [ -f "$ROOT/configs/linux/tls-targets.conf" ]; then
+        run_profile_one tls tls-inventory-scanner "$parent_dir" \
+          "$ROOT/bin/opsforge" linux tls --targets "$ROOT/configs/linux/tls-targets.conf" "${PROFILE_ARGS[@]}" ||
+          failed=$((failed + 1))
+      else
+        profile_add_skip tls "missing configs/linux/tls-targets.conf"
+      fi
+      if [ -f "$ROOT/configs/linux/network-targets.conf" ]; then
+        run_profile_one net-drift network-path-drift "$parent_dir" \
+          "$ROOT/bin/opsforge" linux net-drift --targets "$ROOT/configs/linux/network-targets.conf" "${PROFILE_ARGS[@]}" ||
+          failed=$((failed + 1))
+      else
+        profile_add_skip net-drift "missing configs/linux/network-targets.conf"
+      fi
+      if [ -f "$ROOT/configs/examples/log-sources.conf" ]; then
+        run_profile_one log-silence log-source-silence-detector "$parent_dir" \
+          "$ROOT/bin/opsforge" linux log-silence --config "$ROOT/configs/examples/log-sources.conf" "${PROFILE_ARGS[@]}" ||
+          failed=$((failed + 1))
+      else
+        profile_add_skip log-silence "missing configs/examples/log-sources.conf"
+      fi
+      ;;
+    full|all)
+      run_profile_one triage linux-triage-collector "$parent_dir" \
+        "$ROOT/bin/opsforge" linux triage "${PROFILE_ARGS[@]}" || failed=$((failed + 1))
+      run_profile_one persistence linux-persistence-hunter "$parent_dir" \
+        "$ROOT/bin/opsforge" linux persistence "${PROFILE_ARGS[@]}" || failed=$((failed + 1))
+      run_profile_one deleted-binaries deleted-binary-detector "$parent_dir" \
+        "$ROOT/bin/opsforge" linux deleted-binaries "${PROFILE_ARGS[@]}" || failed=$((failed + 1))
+      run_profile_one proc-tree process-tree-anomaly "$parent_dir" \
+        "$ROOT/bin/opsforge" linux proc-tree "${PROFILE_ARGS[@]}" || failed=$((failed + 1))
+      run_profile_one priv-surface linux-privilege-surface-audit "$parent_dir" \
+        "$ROOT/bin/opsforge" linux priv-surface "${PROFILE_ARGS[@]}" || failed=$((failed + 1))
+      run_profile_one ssh-audit ssh-hardening-audit "$parent_dir" \
+        "$ROOT/bin/opsforge" linux ssh-audit "${PROFILE_ARGS[@]}" || failed=$((failed + 1))
+      run_profile_one firewall firewall-rule-analyzer "$parent_dir" \
+        "$ROOT/bin/opsforge" linux firewall "${PROFILE_ARGS[@]}" || failed=$((failed + 1))
+      run_profile_one disk-rca disk-pressure-rca "$parent_dir" \
+        "$ROOT/bin/opsforge" linux disk-rca "${PROFILE_ARGS[@]}" || failed=$((failed + 1))
+      run_profile_one timeline timeline-builder "$parent_dir" \
+        "$ROOT/bin/opsforge" linux timeline "${PROFILE_ARGS[@]}" || failed=$((failed + 1))
+      run_profile_one web-triage web-compromise-triage "$parent_dir" \
+        "$ROOT/bin/opsforge" linux web-triage "${PROFILE_ARGS[@]}" || failed=$((failed + 1))
+      if [ -f "$ROOT/configs/linux/tls-targets.conf" ]; then
+        run_profile_one tls tls-inventory-scanner "$parent_dir" \
+          "$ROOT/bin/opsforge" linux tls --targets "$ROOT/configs/linux/tls-targets.conf" "${PROFILE_ARGS[@]}" ||
+          failed=$((failed + 1))
+      else
+        profile_add_skip tls "missing configs/linux/tls-targets.conf"
+      fi
+      if [ -f "$ROOT/configs/linux/network-targets.conf" ]; then
+        run_profile_one net-drift network-path-drift "$parent_dir" \
+          "$ROOT/bin/opsforge" linux net-drift --targets "$ROOT/configs/linux/network-targets.conf" "${PROFILE_ARGS[@]}" ||
+          failed=$((failed + 1))
+      else
+        profile_add_skip net-drift "missing configs/linux/network-targets.conf"
+      fi
+      if [ -f "$ROOT/configs/examples/log-sources.conf" ]; then
+        run_profile_one log-silence log-source-silence-detector "$parent_dir" \
+          "$ROOT/bin/opsforge" linux log-silence --config "$ROOT/configs/examples/log-sources.conf" "${PROFILE_ARGS[@]}" ||
+          failed=$((failed + 1))
+      else
+        profile_add_skip log-silence "missing configs/examples/log-sources.conf"
+      fi
+      ;;
+    *)
+      printf 'unknown linux profile: %s\n' "$profile" >&2
+      return 2
+      ;;
+  esac
 
-  if [ -f "$ROOT/configs/linux/tls-targets.conf" ]; then
-    run_all_one tls tls-inventory-scanner "$output_base" \
-      "$ROOT/bin/opsforge" linux tls --targets "$ROOT/configs/linux/tls-targets.conf" "$@" || failed=1
-  fi
-  if [ -f "$ROOT/configs/linux/network-targets.conf" ]; then
-    run_all_one net-drift network-path-drift "$output_base" \
-      "$ROOT/bin/opsforge" linux net-drift --targets "$ROOT/configs/linux/network-targets.conf" "$@" || failed=1
-  fi
-  if [ -f "$ROOT/configs/examples/log-sources.conf" ]; then
-    run_all_one log-silence log-source-silence-detector "$output_base" \
-      "$ROOT/bin/opsforge" linux log-silence --config "$ROOT/configs/examples/log-sources.conf" "$@" || failed=1
-  fi
+  ended="$(timestamp_utc)"
+  write_profile_summary "$parent_dir" "$profile" "$host" "$started" "$ended" "$failed"
+  printf '[opsforge] profile summary: %s/run-summary.md\n' "$parent_dir"
 
-  return "$failed"
+  [ "$failed" -eq 0 ]
 }
 
 case "${1:-}" in
@@ -357,7 +615,7 @@ shift 2
 
 case "$platform:$command_name" in
   linux:doctor) run_doctor "$@" ;;
-  linux:all) run_linux_all "$@" ;;
+  linux:quick|linux:ir|linux:noc|linux:full|linux:all) run_linux_profile "$command_name" "$@" ;;
   linux:triage) exec "$ROOT/scripts/linux/endpoint/linux-triage-collector.sh" "$@" ;;
   linux:persistence) exec "$ROOT/scripts/linux/persistence/linux-persistence-hunter.sh" "$@" ;;
   linux:deleted-binaries|linux:deleted-binary) exec "$ROOT/scripts/linux/forensic/deleted-binary-detector.sh" "$@" ;;
