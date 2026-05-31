@@ -8,6 +8,7 @@ usage() {
   cat <<'USAGE'
 Usage:
   opsforge doctor [--output DIR]
+  opsforge clean --dry-run [--output DIR]
   opsforge linux doctor [--output DIR]
   opsforge linux quick [args...]
   opsforge linux ir [args...]
@@ -32,6 +33,7 @@ Usage:
 
 Examples:
   opsforge doctor
+  opsforge clean --dry-run --output ./output
   opsforge linux quick --output ./output --markdown --json
   opsforge linux all --output ./output --markdown --json
   opsforge linux triage --output ./output --markdown --json
@@ -197,6 +199,70 @@ parse_output_arg() {
     shift || break
   done
   printf '%s\n' "$output"
+}
+
+run_clean() {
+  local output_base="./output"
+  local dry_run=1
+  local candidate name found=0
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --dry-run)
+        dry_run=1
+        shift
+        ;;
+      --output|-o)
+        output_base="${2:?missing output directory}"
+        shift 2
+        ;;
+      --output=*)
+        output_base="${1#--output=}"
+        shift
+        ;;
+      -h|--help)
+        cat <<'USAGE'
+Usage: opsforge clean --dry-run [--output DIR]
+
+List generated opsforge output directories that would be removed.
+
+This command is dry-run only for now. It does not delete anything.
+USAGE
+        return 0
+        ;;
+      *)
+        printf 'Unknown clean argument: %s\n' "$1" >&2
+        return 2
+        ;;
+    esac
+  done
+
+  if [ "$dry_run" -ne 1 ]; then
+    printf 'clean only supports --dry-run right now\n' >&2
+    return 2
+  fi
+
+  if [ ! -d "$output_base" ]; then
+    printf '[opsforge] output directory does not exist: %s\n' "$output_base"
+    return 0
+  fi
+
+  printf '[opsforge] dry-run clean for %s\n' "$output_base"
+  while IFS= read -r candidate; do
+    [ -d "$candidate" ] || continue
+    [ ! -L "$candidate" ] || continue
+    name="$(basename "$candidate")"
+    case "$name" in
+      *-20[0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]*)
+        found=1
+        printf 'would remove: %s\n' "$candidate"
+        ;;
+    esac
+  done < <(find "$output_base" -mindepth 1 -maxdepth 1 -type d -print 2>/dev/null | sort)
+
+  if [ "$found" -eq 0 ]; then
+    printf 'nothing to clean\n'
+  fi
 }
 
 timestamp_utc() {
@@ -533,6 +599,11 @@ case "${1:-}" in
   doctor)
     shift
     run_doctor "$@"
+    exit $?
+    ;;
+  clean)
+    shift
+    run_clean "$@"
     exit $?
     ;;
 esac
