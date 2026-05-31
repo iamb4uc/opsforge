@@ -90,10 +90,18 @@ if [ -s "$MATCHES" ]; then
     case "$text" in
       *"/dev/shm"*|*"/tmp/"*|*"nc -e"*|*"socat exec"*|*"chattr +i"*|*"chmod +s"*) severity="high" ;;
     esac
+    title="Suspicious persistence content"
+    evidence="$file:$lineno $text"
+    recommendation="Review the referenced persistence location, validate owner and change history, and remove unauthorized entries."
+    if opsforge_is_allowlisted paths "$evidence" || opsforge_is_allowlisted services "$evidence"; then
+      severity="$(opsforge_reduced_severity "$severity")"
+      title="$title (allowlisted)"
+      recommendation="$recommendation This matched an allowlist; verify the entry is still wanted."
+    fi
     write_finding_json "$TMP_FINDINGS" "LINUX-PERSISTENCE-$(printf '%s' "$file:$lineno" | cksum | awk '{print $1}')" \
-      "Suspicious persistence content" "$severity" "$HOST" "persistence" \
-      "$file:$lineno $text" \
-      "Review the referenced persistence location, validate owner and change history, and remove unauthorized entries."
+      "$title" "$severity" "$HOST" "persistence" \
+      "$evidence" \
+      "$recommendation"
   done < "$MATCHES"
 fi
 

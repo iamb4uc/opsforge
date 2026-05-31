@@ -220,9 +220,16 @@ while IFS= read -r line; do
   [ -n "$line" ] || continue
   severity="medium"
   case "$line" in *"/dev/shm/"*) severity="high" ;; esac
+  title="Process executable runs from temporary path"
+  recommendation="Validate process lineage, binary hash, and whether execution from temporary paths is expected."
+  if opsforge_is_allowlisted paths "$line"; then
+    severity="$(opsforge_reduced_severity "$severity")"
+    title="$title (allowlisted)"
+    recommendation="$recommendation This matched allowlist-paths.conf; verify the allowlist entry is still wanted."
+  fi
   write_finding_json "$TMP_FINDINGS" "LINUX-TRIAGE-PROC-$(printf '%s' "$line" | cksum | awk '{print $1}')" \
-    "Process executable runs from temporary path" "$severity" "$HOST" "endpoint" "$line" \
-    "Validate process lineage, binary hash, and whether execution from temporary paths is expected."
+    "$title" "$severity" "$HOST" "endpoint" "$line" \
+    "$recommendation"
 done < "$OUT_DIR/normalized/suspicious-process-paths.txt"
 
 if [ -s "$OUT_DIR/raw/deleted-running-binaries.txt" ]; then
@@ -243,17 +250,33 @@ fi
 } | sort -u > "$OUT_DIR/normalized/world-writable-sensitive-files.txt"
 while IFS= read -r file; do
   [ -n "$file" ] || continue
+  severity="high"
+  title="World-writable sensitive file"
+  recommendation="Remove world-write permissions and investigate recent modification history."
+  if opsforge_is_allowlisted paths "$file"; then
+    severity="$(opsforge_reduced_severity "$severity")"
+    title="$title (allowlisted)"
+    recommendation="$recommendation This matched allowlist-paths.conf; verify the allowlist entry is still wanted."
+  fi
   write_finding_json "$TMP_FINDINGS" "LINUX-TRIAGE-WW-$(printf '%s' "$file" | cksum | awk '{print $1}')" \
-    "World-writable sensitive file" "high" "$HOST" "hardening" "$file" \
-    "Remove world-write permissions and investigate recent modification history."
+    "$title" "$severity" "$HOST" "hardening" "$file" \
+    "$recommendation"
 done < "$OUT_DIR/normalized/world-writable-sensitive-files.txt"
 
 bounded_find / -xdev \( -perm -4000 -o -perm -2000 \) -type f -mtime -14 -print 2>/dev/null > "$OUT_DIR/normalized/recent-suid-sgid.txt" || true
 while IFS= read -r file; do
   [ -n "$file" ] || continue
+  severity="medium"
+  title="Recent SUID or SGID file"
+  recommendation="Validate package ownership, timestamp, hash, and whether privileged mode is expected."
+  if opsforge_is_allowlisted suid "$file" || opsforge_is_allowlisted paths "$file"; then
+    severity="$(opsforge_reduced_severity "$severity")"
+    title="$title (allowlisted)"
+    recommendation="$recommendation This matched an allowlist; verify the entry is still wanted."
+  fi
   write_finding_json "$TMP_FINDINGS" "LINUX-TRIAGE-SUID-$(printf '%s' "$file" | cksum | awk '{print $1}')" \
-    "Recent SUID or SGID file" "medium" "$HOST" "hardening" "$file" \
-    "Validate package ownership, timestamp, hash, and whether privileged mode is expected."
+    "$title" "$severity" "$HOST" "hardening" "$file" \
+    "$recommendation"
 done < "$OUT_DIR/normalized/recent-suid-sgid.txt"
 
 if command -v systemctl >/dev/null 2>&1; then
@@ -262,9 +285,18 @@ if command -v systemctl >/dev/null 2>&1; then
     execs="$(systemctl show "$unit" -p ExecStart --value 2>/dev/null || true)"
     case "$fragment $execs" in
       *"/tmp/"*|*"/dev/shm/"*|*"/var/tmp/"*)
+        severity="high"
+        title="Systemd service references temporary path"
+        evidence="$unit $fragment $execs"
+        recommendation="Disable unauthorized service units after preserving the unit file and referenced binary."
+        if opsforge_is_allowlisted services "$evidence" || opsforge_is_allowlisted paths "$evidence"; then
+          severity="$(opsforge_reduced_severity "$severity")"
+          title="$title (allowlisted)"
+          recommendation="$recommendation This matched an allowlist; verify the entry is still wanted."
+        fi
         write_finding_json "$TMP_FINDINGS" "LINUX-TRIAGE-SYSTEMD-$(printf '%s' "$unit" | cksum | awk '{print $1}')" \
-          "Systemd service references temporary path" "high" "$HOST" "persistence" "$unit $fragment $execs" \
-          "Disable unauthorized service units after preserving the unit file and referenced binary."
+          "$title" "$severity" "$HOST" "persistence" "$evidence" \
+          "$recommendation"
         ;;
     esac
   done
@@ -279,9 +311,17 @@ done > "$INIT_TEMP_MATCHES"
 
 while IFS= read -r line; do
   [ -n "$line" ] || continue
+  severity="high"
+  title="Init service references temporary path"
+  recommendation="Validate the service file and referenced binary before changing service state."
+  if opsforge_is_allowlisted services "$line" || opsforge_is_allowlisted paths "$line"; then
+    severity="$(opsforge_reduced_severity "$severity")"
+    title="$title (allowlisted)"
+    recommendation="$recommendation This matched an allowlist; verify the entry is still wanted."
+  fi
   write_finding_json "$TMP_FINDINGS" "LINUX-TRIAGE-INIT-$(printf '%s' "$line" | cksum | awk '{print $1}')" \
-    "Init service references temporary path" "high" "$HOST" "persistence" "$line" \
-    "Validate the service file and referenced binary before changing service state."
+    "$title" "$severity" "$HOST" "persistence" "$line" \
+    "$recommendation"
 done < "$INIT_TEMP_MATCHES"
 
 finalize_findings_json "$TMP_FINDINGS" "$OUT_DIR/findings.json"
