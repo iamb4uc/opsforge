@@ -92,81 +92,86 @@ function Save-OpsForgeReport {
         info = 4
     }
     $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
-    $lines = New-Object System.Collections.Generic.List[string]
+    $lines = @()
 
-    $lines.Add("# $Title")
-    $lines.Add('')
-    $lines.Add("- Host: $(Get-OpsForgeHostName)")
-    $lines.Add("- Generated: $timestamp")
-    $lines.Add("- Collection mode: $CollectionMode")
-    $lines.Add("- Output: $OutputDirectory")
-    $lines.Add('')
-    $lines.Add('## Finding Count')
-    $lines.Add('')
-    $lines.Add("- Total: $($findingList.Count)")
+    $lines += "# $Title"
+    $lines += ''
+    $lines += "- Host: $(Get-OpsForgeHostName)"
+    $lines += "- Generated: $timestamp"
+    $lines += "- Collection mode: $CollectionMode"
+    $lines += "- Output: $OutputDirectory"
+    $lines += ''
+    $lines += '## Finding Count'
+    $lines += ''
+    $lines += "- Total: $($findingList.Count)"
     foreach ($severity in $severityOrder) {
         $count = @($findingList | Where-Object { $_.severity -eq $severity }).Count
-        $lines.Add("- ${severity}: $count")
+        $lines += "- ${severity}: $count"
     }
 
     if ($Stats.Count -gt 0) {
-        $lines.Add('')
-        $lines.Add('## Collected')
-        $lines.Add('')
+        $lines += ''
+        $lines += '## Collected'
+        $lines += ''
         foreach ($key in ($Stats.Keys | Sort-Object)) {
-            $lines.Add("- ${key}: $($Stats[$key])")
+            $lines += "- ${key}: $($Stats[$key])"
         }
     }
 
-    $lines.Add('')
-    $lines.Add('## Top Findings')
-    $lines.Add('')
+    $lines += ''
+    $lines += '## Top Findings'
+    $lines += ''
     $topFindings = $findingList |
-        Sort-Object @{ Expression = { $severityRank[[string]$_.severity] } }, title |
+        Sort-Object @{
+            Expression = {
+                $severity = [string]$_.severity
+                if ($severityRank.ContainsKey($severity)) { $severityRank[$severity] } else { 99 }
+            }
+        }, @{ Expression = { [string]$_.title } } |
         Select-Object -First 10
     if (@($topFindings).Count -eq 0) {
-        $lines.Add('No findings recorded.')
+        $lines += 'No findings recorded.'
     } else {
         foreach ($finding in $topFindings) {
             $severity = ([string]$finding.severity).ToUpperInvariant()
-            $lines.Add("- [$severity] $($finding.title) - $($finding.evidence)")
+            $lines += "- [$severity] $($finding.title) - $($finding.evidence)"
         }
     }
 
-    $lines.Add('')
-    $lines.Add('## Evidence Files')
-    $lines.Add('')
+    $lines += ''
+    $lines += '## Evidence Files'
+    $lines += ''
     if (@($EvidenceFiles).Count -eq 0) {
-        $lines.Add('- raw\')
-        $lines.Add('- findings.json')
-        $lines.Add('- summary.txt')
+        $lines += '- raw\'
+        $lines += '- findings.json'
+        $lines += '- summary.txt'
     } else {
         foreach ($file in $EvidenceFiles) {
-            $lines.Add("- $file")
+            $lines += "- $file"
         }
     }
 
-    $lines.Add('')
-    $lines.Add('## Collection Limitations')
-    $lines.Add('')
+    $lines += ''
+    $lines += '## Collection Limitations'
+    $lines += ''
     if (@($Limitations).Count -eq 0) {
-        $lines.Add('No explicit limitations recorded. Some data can still be partial without admin rights.')
+        $lines += 'No explicit limitations recorded. Some data can still be partial without admin rights.'
     } else {
         foreach ($limitation in $Limitations) {
-            $lines.Add("- $limitation")
+            $lines += "- $limitation"
         }
     }
 
-    $lines.Add('')
-    $lines.Add('## Next Steps')
-    $lines.Add('')
+    $lines += ''
+    $lines += '## Next Steps'
+    $lines += ''
     if (@($NextSteps).Count -eq 0) {
-        $lines.Add('- Review high and critical findings first.')
-        $lines.Add('- Check raw evidence before making changes.')
-        $lines.Add('- Treat missing data as partial collection, not proof of absence.')
+        $lines += '- Review high and critical findings first.'
+        $lines += '- Check raw evidence before making changes.'
+        $lines += '- Treat missing data as partial collection, not proof of absence.'
     } else {
         foreach ($step in $NextSteps) {
-            $lines.Add("- $step")
+            $lines += "- $step"
         }
     }
 
