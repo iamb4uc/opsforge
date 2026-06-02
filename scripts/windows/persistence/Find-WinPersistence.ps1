@@ -79,7 +79,20 @@ foreach ($folder in $startupFolders) {
     }
 }
 
-$profiles = @($PROFILE.AllUsersAllHosts,$PROFILE.AllUsersCurrentHost,$PROFILE.CurrentUserAllHosts,$PROFILE.CurrentUserCurrentHost) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
+$profileNames = @(
+    'AllUsersAllHosts',
+    'AllUsersCurrentHost',
+    'CurrentUserAllHosts',
+    'CurrentUserCurrentHost'
+)
+$profiles = @(
+    foreach ($profileName in $profileNames) {
+        $property = $PROFILE.PSObject.Properties[$profileName]
+        if ($property -and $property.Value -and (Test-Path $property.Value)) {
+            $property.Value
+        }
+    }
+) | Select-Object -Unique
 foreach ($profilePath in $profiles) {
     $content = Get-Content -Raw -Path $profilePath -ErrorAction SilentlyContinue
     $autoruns.Add([pscustomobject]@{ Source = 'PowerShellProfile'; Name = $profilePath; Command = $content })
