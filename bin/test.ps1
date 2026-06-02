@@ -184,7 +184,10 @@ function Test-ContractsUnder {
     param([string]$Base)
     $count = 0
     $findings = Get-ChildItem -Path $Base -Recurse -File -Filter findings.json |
-        Where-Object { Split-Path -Leaf (Split-Path -Parent $_.FullName) -ne 'normalized' }
+        Where-Object {
+            $parentName = Split-Path -Leaf (Split-Path -Parent $_.FullName)
+            $parentName -ne 'normalized'
+        }
     foreach ($finding in $findings) {
         Test-OutputContract -OutputDirectory (Split-Path -Parent $finding.FullName)
         $count++
