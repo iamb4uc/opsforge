@@ -117,12 +117,24 @@ foreach ($key in $specialKeys) {
 }
 
 try {
-    Get-CimInstance -Namespace root\subscription -ClassName __EventConsumer | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\wmi-event-consumers.json')
+    Get-CimInstance -Namespace root\subscription -ClassName __EventConsumer |
+        Select-Object Name, CreatorSID, CommandLineTemplate, ExecutablePath, ScriptingEngine, ScriptText |
+        ConvertTo-Json -Depth 3 |
+        Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\wmi-event-consumers.json')
 } catch {
     "Unable to read WMI event consumers: $($_.Exception.Message)" | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\wmi-event-consumers.error.txt')
 }
 
-$autoruns.ToArray() | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\autoruns.json')
+try {
+    $autoruns.ToArray() |
+        Select-Object Source, Name, Command |
+        ConvertTo-Json -Depth 3 |
+        Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\autoruns.json')
+} catch {
+    "Unable to serialize autoruns: $($_.Exception.Message)" | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\autoruns.error.txt')
+    @($autoruns.ToArray() | ForEach-Object { "$($_.Source)`t$($_.Name)`t$($_.Command)" }) |
+        Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\autoruns.tsv')
+}
 
 try {
     Save-OpsForgeFindings -Findings $findings.ToArray() -OutputDirectory $OutDir
