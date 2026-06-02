@@ -121,20 +121,27 @@ function Save-OpsForgeReport {
     $lines += ''
     $lines += '## Top Findings'
     $lines += ''
-    $topFindings = $findingList |
-        Sort-Object @{
-            Expression = {
-                $severity = [string]$_.severity
-                if ($severityRank.ContainsKey($severity)) { $severityRank[$severity] } else { 99 }
-            }
-        }, @{ Expression = { [string]$_.title } } |
-        Select-Object -First 10
+    $rankedFindings = foreach ($finding in $findingList) {
+        $severity = [string]$finding.severity
+        $rank = 99
+        if ($severity -and $severityRank.ContainsKey($severity)) {
+            $rank = $severityRank[$severity]
+        }
+        [pscustomobject]@{
+            Rank = $rank
+            Severity = $severity
+            Title = [string]$finding.title
+            Evidence = [string]$finding.evidence
+        }
+    }
+    $topFindings = @($rankedFindings | Sort-Object Rank, Title | Select-Object -First 10)
     if (@($topFindings).Count -eq 0) {
         $lines += 'No findings recorded.'
     } else {
         foreach ($finding in $topFindings) {
-            $severity = ([string]$finding.severity).ToUpperInvariant()
-            $lines += "- [$severity] $($finding.title) - $($finding.evidence)"
+            $severity = ([string]$finding.Severity).ToUpperInvariant()
+            if (-not $severity) { $severity = 'INFO' }
+            $lines += "- [$severity] $($finding.Title) - $($finding.Evidence)"
         }
     }
 
