@@ -123,27 +123,63 @@ try {
 }
 
 $autoruns.ToArray() | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\autoruns.json')
-Save-OpsForgeFindings -Findings $findings.ToArray() -OutputDirectory $OutDir
-Save-OpsForgeReport `
-    -OutputDirectory $OutDir `
-    -Title 'Windows Persistence Hunter' `
-    -Findings $findings.ToArray() `
-    -Stats @{
-        AutorunRecords = @($autoruns).Count
-        PowerShellProfiles = @($profiles).Count
-    } `
-    -EvidenceFiles @(
-        'raw\autoruns.json',
-        'raw\wmi-event-consumers.json',
-        'raw\wmi-event-consumers.error.txt'
-    ) `
-    -Limitations @(
-        'Registry, WMI, and scheduled task visibility can be partial without admin rights.',
-        'PowerShell profile paths vary between Windows PowerShell and PowerShell 7.'
-    ) `
-    -NextSteps @(
-        'Start with AppData, Temp, encoded PowerShell, hidden task, and LOLBin findings.',
-        'Export suspicious scheduled tasks and preserve referenced binaries before cleanup.'
-    )
+
+try {
+    Save-OpsForgeFindings -Findings $findings.ToArray() -OutputDirectory $OutDir
+} catch {
+    $message = "Unable to write findings cleanly: $($_.Exception.Message)"
+    $message | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\findings-write-error.txt')
+    '[]' | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'findings.json')
+    '[]' | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'normalized\findings.json')
+}
+
+try {
+    Save-OpsForgeReport `
+        -OutputDirectory $OutDir `
+        -Title 'Windows Persistence Hunter' `
+        -Findings $findings.ToArray() `
+        -Stats @{
+            AutorunRecords = @($autoruns).Count
+            PowerShellProfiles = @($profiles).Count
+        } `
+        -EvidenceFiles @(
+            'raw\autoruns.json',
+            'raw\wmi-event-consumers.json',
+            'raw\wmi-event-consumers.error.txt'
+        ) `
+        -Limitations @(
+            'Registry, WMI, and scheduled task visibility can be partial without admin rights.',
+            'PowerShell profile paths vary between Windows PowerShell and PowerShell 7.'
+        ) `
+        -NextSteps @(
+            'Start with AppData, Temp, encoded PowerShell, hidden task, and LOLBin findings.',
+            'Export suspicious scheduled tasks and preserve referenced binaries before cleanup.'
+        )
+} catch {
+    $message = "Unable to write full report: $($_.Exception.Message)"
+    $message | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\report-write-error.txt')
+    @(
+        '# Windows Persistence Hunter',
+        '',
+        "- Host: $env:COMPUTERNAME",
+        "- Findings: $($findings.Count)",
+        "- Autorun records: $(@($autoruns).Count)",
+        '',
+        '## Evidence Files',
+        '',
+        '- raw\autoruns.json',
+        '- findings.json',
+        '',
+        '## Collection Limitations',
+        '',
+        "- $message",
+        '- Registry, WMI, and scheduled task visibility can be partial without admin rights.',
+        '',
+        '## Next Steps',
+        '',
+        '- Review findings.json and raw\autoruns.json.',
+        '- Preserve suspicious referenced files before cleanup.'
+    ) | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'report.md')
+}
 Save-OpsForgeSummary -OutputDirectory $OutDir -Title 'Windows persistence hunter' -FindingCount $findings.Count
 Write-OpsForgeInfo -Message "Output written to $OutDir" -Quiet:$Quiet
