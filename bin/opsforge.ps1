@@ -24,6 +24,9 @@ function Show-Usage {
 Usage:
   .\bin\opsforge.ps1 doctor
   .\bin\opsforge.ps1 windows doctor
+  .\bin\opsforge.ps1 windows quick -OutputPath .\output -Json -Markdown
+  .\bin\opsforge.ps1 windows ir -OutputPath .\output -Json -Markdown
+  .\bin\opsforge.ps1 windows full -OutputPath .\output -Json -Markdown
   .\bin\opsforge.ps1 windows all -OutputPath .\output -Json -Markdown
   .\bin\opsforge.ps1 windows triage -OutputPath .\output
   .\bin\opsforge.ps1 windows persistence -OutputPath .\output
@@ -123,11 +126,27 @@ function Get-OutputRoot {
     return (Join-Path $Root 'output')
 }
 
+function Get-SafeHostname {
+    $name = $env:COMPUTERNAME
+    if (-not $name) { $name = [System.Net.Dns]::GetHostName() }
+    if (-not $name) { $name = 'unknown-host' }
+    return ($name -replace '[^A-Za-z0-9._-]', '_')
+}
+
 function Get-LatestOutputDirectory {
     param([string]$Base, [string]$ScriptName)
 
     Get-ChildItem -Path $Base -Directory -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -like "*-$ScriptName-*" } |
+        Sort-Object LastWriteTime |
+        Select-Object -Last 1 -ExpandProperty FullName
+}
+
+function Get-LatestProfileDirectory {
+    param([string]$Base, [string]$Profile)
+
+    Get-ChildItem -Path $Base -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -like "opsforge-windows-$Profile-*" } |
         Sort-Object LastWriteTime |
         Select-Object -Last 1 -ExpandProperty FullName
 }
@@ -187,20 +206,208 @@ function Invoke-AllOne {
     return (-not $failed)
 }
 
-function Invoke-WindowsAll {
+function New-ProfileArguments {
+    param([string]$OutputRoot)
+
+    $args = @{
+        OutputPath = $OutputRoot
+    }
+    if ($Json) { $args.Json = $true }
+    if ($Markdown) { $args.Markdown = $true }
+    if ($Quiet) { $args.Quiet = $true }
+    return $args
+}
+
+function New-ProfileResult {
+    param(
+        [string]$Name,
+        [string]$Status,
+        [string]$Output,
+        [string]$Contract
+    )
+
+    [pscustomobject]@{
+        name = $Name
+        status = $Status
+        output = $Output
+        contract = $Contract
+    }
+}
+
+function Invoke-ProfileScript {
+    param(
+        [string]$Name,
+        [string]$ScriptName,
+        [string]$ScriptPath,
+        [string]$OutputRoot,
+        [hashtable]$ProfileArgs
+    )
+
+    $failed = $false
+    Write-Host ("[opsforge] running {0}" -f $Name)
+    try {
+        & $ScriptPath @ProfileArgs
+        $exitCode = Get-Variable -Name LASTEXITCODE -ValueOnly -ErrorAction SilentlyContinue
+        if ($null -ne $exitCode -and $exitCode -ne 0) {
+            $failed = $true
+            Write-Host ("[opsforge] failed: {0} exited with {1}" -f $Name, $exitCode)
+        }
+    } catch {
+        $failed = $true
+        Write-Host ("[opsforge] failed: {0}: {1}" -f $Name, $_.Exception.Message)
+    }
+
+    $outDir = Get-LatestOutputDirectory -Base $OutputRoot -ScriptName $ScriptName
+    if (-not $outDir) {
+        Write-Host ("[opsforge] failed: {0} did not create output" -f $Name)
+        return (New-ProfileResult -Name $Name -Status 'failed' -Output '' -Contract 'missing-output')
+    }
+
+    Write-Host ("[opsforge] output: {0}" -f $outDir)
+    try {
+        Test-OutputContract -OutputDirectory $outDir
+    } catch {
+        Write-Host ("[opsforge] failed: {0} output contract failed: {1}" -f $Name, $_.Exception.Message)
+        return (New-ProfileResult -Name $Name -Status 'failed' -Output $outDir -Contract 'failed')
+    }
+
+    if ($failed) {
+        return (New-ProfileResult -Name $Name -Status 'failed' -Output $outDir -Contract 'passed')
+    }
+
+    return (New-ProfileResult -Name $Name -Status 'passed' -Output $outDir -Contract 'passed')
+}
+
+function Write-WindowsProfileSummary {
+    param(
+        [string]$ParentDir,
+        [string]$Profile,
+        [string]$HostName,
+        [datetime]$StartedAt,
+        [datetime]$EndedAt,
+        [object[]]$Results,
+        [object[]]$Skipped
+    )
+
+    $failed = @($Results | Where-Object { $_.status -ne 'passed' }).Count
+    $summaryMd = Join-Path $ParentDir 'run-summary.md'
+    $summaryJson = Join-Path $ParentDir 'run-summary.json'
+    $lines = @(
+        "# opsforge Windows $Profile",
+        '',
+        "Host: $HostName",
+        '',
+        ('Started: {0}' -f $StartedAt.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')),
+        '',
+        ('Ended: {0}' -f $EndedAt.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')),
+        '',
+        "Failed tools: $failed",
+        '',
+        '## Tools',
+        '',
+        '| Tool | Status | Contract | Output |',
+        '| --- | --- | --- | --- |'
+    )
+
+    foreach ($result in $Results) {
+        $output = if ($result.output) { $result.output } else { 'none' }
+        $lines += ('| {0} | {1} | {2} | {3} |' -f $result.name, $result.status, $result.contract, $output)
+    }
+
+    $lines += ''
+    $lines += '## Skipped'
+    $lines += ''
+    if (@($Skipped).Count -eq 0) {
+        $lines += 'None.'
+    } else {
+        foreach ($item in $Skipped) {
+            $lines += ('- {0}: {1}' -f $item.name, $item.reason)
+        }
+    }
+
+    $lines += ''
+    $lines += '## Next Steps'
+    $lines += ''
+    if ($failed -gt 0) {
+        $lines += '- Review failed tool output and rerun that tool directly.'
+    } else {
+        $lines += '- Review findings.json and report.md files for each tool output.'
+    }
+
+    Set-Content -Path $summaryMd -Value $lines -Encoding UTF8
+
+    [pscustomobject]@{
+        host = $HostName
+        profile = $Profile
+        started_at = $StartedAt.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+        ended_at = $EndedAt.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+        failed_tools = $failed
+        tools = $Results
+        skipped = $Skipped
+    } | ConvertTo-Json -Depth 6 | Set-Content -Path $summaryJson -Encoding UTF8
+}
+
+function Invoke-WindowsProfile {
+    param([string]$Profile)
+
     $outputRoot = Get-OutputRoot
     New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
-    $ok = $true
 
-    if (-not (Invoke-AllOne -Name 'triage' -ScriptName 'Invoke-WinTriage' -Arguments @('windows','triage') -OutputRoot $outputRoot)) { $ok = $false }
-    if (-not (Invoke-AllOne -Name 'persistence' -ScriptName 'Find-WinPersistence' -Arguments @('windows','persistence') -OutputRoot $outputRoot)) { $ok = $false }
-    if (-not (Invoke-AllOne -Name 'tasks' -ScriptName 'Test-WinScheduledTasks' -Arguments @('windows','tasks') -OutputRoot $outputRoot)) { $ok = $false }
-    if (-not (Invoke-AllOne -Name 'network' -ScriptName 'Get-WinNetworkExposure' -Arguments @('windows','network') -OutputRoot $outputRoot)) { $ok = $false }
-    if (-not (Invoke-AllOne -Name 'timeline' -ScriptName 'New-WinEventTimeline' -Arguments @('windows','timeline') -OutputRoot $outputRoot)) { $ok = $false }
+    $hostName = Get-SafeHostname
+    $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+    $parentDir = Join-Path $outputRoot "opsforge-windows-$Profile-$hostName-$stamp"
+    New-Item -ItemType Directory -Force -Path $parentDir | Out-Null
 
-    if (-not $ok) {
+    $profileArgs = New-ProfileArguments -OutputRoot $parentDir
+    $startedAt = Get-Date
+    $results = @()
+    $skipped = @()
+
+    $scripts = @{
+        triage = @{ Path = Join-Path $Root 'scripts\windows\endpoint\Invoke-WinTriage.ps1'; ScriptName = 'Invoke-WinTriage' }
+        persistence = @{ Path = Join-Path $Root 'scripts\windows\persistence\Find-WinPersistence.ps1'; ScriptName = 'Find-WinPersistence' }
+        tasks = @{ Path = Join-Path $Root 'scripts\windows\persistence\Test-WinScheduledTasks.ps1'; ScriptName = 'Test-WinScheduledTasks' }
+        network = @{ Path = Join-Path $Root 'scripts\windows\network\Get-WinNetworkExposure.ps1'; ScriptName = 'Get-WinNetworkExposure' }
+        timeline = @{ Path = Join-Path $Root 'scripts\windows\forensic\New-WinEventTimeline.ps1'; ScriptName = 'New-WinEventTimeline' }
+        services = @{ Path = Join-Path $Root 'scripts\windows\endpoint\Test-WinServiceAnomaly.ps1'; ScriptName = 'Test-WinServiceAnomaly' }
+        firewall = @{ Path = Join-Path $Root 'scripts\windows\network\Test-WinFirewallExposure.ps1'; ScriptName = 'Test-WinFirewallExposure' }
+        defender = @{ Path = Join-Path $Root 'scripts\windows\hardening\Test-WinDefenderStatus.ps1'; ScriptName = 'Test-WinDefenderStatus' }
+        privilege = @{ Path = Join-Path $Root 'scripts\windows\hardening\Test-WinPrivilegeSurface.ps1'; ScriptName = 'Test-WinPrivilegeSurface' }
+        logtampering = @{ Path = Join-Path $Root 'scripts\windows\forensic\Test-WinLogTampering.ps1'; ScriptName = 'Test-WinLogTampering' }
+    }
+
+    switch ($Profile) {
+        'quick' { $toolNames = @('triage','tasks','network') }
+        'ir' { $toolNames = @('triage','persistence','tasks','network','timeline') }
+        'full' { $toolNames = @('triage','persistence','services','tasks','network','firewall','defender','privilege','timeline','logtampering') }
+        'all' { $toolNames = @('triage','persistence','tasks','network','timeline') }
+        default {
+            Write-Host "unknown windows profile: $Profile"
+            exit 2
+        }
+    }
+
+    foreach ($toolName in $toolNames) {
+        $tool = $scripts[$toolName]
+        if (-not (Test-Path $tool.Path)) {
+            $skipped += [pscustomobject]@{ name = $toolName; reason = 'script missing' }
+            Write-Host ("[opsforge] skipped {0}: script missing" -f $toolName)
+            continue
+        }
+        $results += Invoke-ProfileScript -Name $toolName -ScriptName $tool.ScriptName -ScriptPath $tool.Path -OutputRoot $parentDir -ProfileArgs $profileArgs
+    }
+
+    $endedAt = Get-Date
+    Write-WindowsProfileSummary -ParentDir $parentDir -Profile $Profile -HostName $hostName -StartedAt $startedAt -EndedAt $endedAt -Results $results -Skipped $skipped
+    Write-Host ("[opsforge] profile summary: {0}" -f (Join-Path $parentDir 'run-summary.md'))
+
+    if (@($results | Where-Object { $_.status -ne 'passed' }).Count -gt 0) {
         exit 1
     }
+}
+
+function Invoke-WindowsAll {
+    Invoke-WindowsProfile -Profile 'all'
 }
 
 if ($Platform -in @('-h','--help') -or -not $Platform) {
@@ -215,6 +422,9 @@ if ($Platform -eq 'doctor') {
 
 switch ("$Platform`:$Command") {
     'windows:doctor' { Invoke-OpsForgeDoctor; break }
+    'windows:quick' { Invoke-WindowsProfile -Profile 'quick'; break }
+    'windows:ir' { Invoke-WindowsProfile -Profile 'ir'; break }
+    'windows:full' { Invoke-WindowsProfile -Profile 'full'; break }
     'windows:all' { Invoke-WindowsAll; break }
     'windows:triage' { Invoke-OpsForgeScript (Join-Path $Root 'scripts\windows\endpoint\Invoke-WinTriage.ps1'); break }
     'windows:persistence' { Invoke-OpsForgeScript (Join-Path $Root 'scripts\windows\persistence\Find-WinPersistence.ps1'); break }
