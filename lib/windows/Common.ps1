@@ -75,14 +75,18 @@ function Save-OpsForgeReport {
         [Parameter(Mandatory = $true)][string]$OutputDirectory,
         [Parameter(Mandatory = $true)][string]$Title,
         [AllowEmptyCollection()][object[]]$Findings = @(),
-        [hashtable]$Stats = @{},
-        [string[]]$EvidenceFiles = @(),
-        [string[]]$Limitations = @(),
-        [string[]]$NextSteps = @(),
+        [object]$Stats = $null,
+        [object[]]$EvidenceFiles = @(),
+        [object[]]$Limitations = @(),
+        [object[]]$NextSteps = @(),
         [string]$CollectionMode = 'read-only'
     )
 
     $findingList = @($Findings)
+    $statMap = @{}
+    if ($Stats -is [hashtable]) {
+        $statMap = $Stats
+    }
     $severityOrder = @('critical','high','medium','low','info')
     $severityRank = @{
         critical = 0
@@ -109,12 +113,12 @@ function Save-OpsForgeReport {
         $lines += "- ${severity}: $count"
     }
 
-    if ($Stats.Count -gt 0) {
+    if ($statMap.Count -gt 0) {
         $lines += ''
         $lines += '## Collected'
         $lines += ''
-        foreach ($key in ($Stats.Keys | Sort-Object)) {
-            $lines += "- ${key}: $($Stats[$key])"
+        foreach ($key in ($statMap.Keys | Sort-Object)) {
+            $lines += "- ${key}: $($statMap[$key])"
         }
     }
 
