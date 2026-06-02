@@ -66,7 +66,32 @@ try {
 Get-Service WinRM,TermService -ErrorAction SilentlyContinue | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\remote-services.json')
 
 Save-OpsForgeFindings -Findings $findings.ToArray() -OutputDirectory $OutDir
-@('# Windows Local Privilege Surface Audit','',"Findings: $($findings.Count)",'Raw evidence is in `raw\`.') | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'privilege-surface-report.md')
-Copy-Item -Force -Path (Join-Path $OutDir 'privilege-surface-report.md') -Destination (Join-Path $OutDir 'report.md')
+Save-OpsForgeReport `
+    -OutputDirectory $OutDir `
+    -Title 'Windows Local Privilege Surface Audit' `
+    -Findings $findings.ToArray() `
+    -Stats @{
+        LocalAdministrators = @($admins).Count
+        Services = @($services).Count
+        ScheduledTasks = @($tasks).Count
+    } `
+    -EvidenceFiles @(
+        'raw\local-admins.json',
+        'raw\rdp-users.json',
+        'raw\backup-operators.json',
+        'raw\services.json',
+        'raw\scheduled-tasks.json',
+        'raw\uac.json',
+        'raw\remote-services.json'
+    ) `
+    -Limitations @(
+        'Group membership visibility can differ on domain-joined or policy-managed hosts.',
+        'Privilege risk depends on local ACLs and domain policy that this script does not change.'
+    ) `
+    -NextSteps @(
+        'Review local admins, Backup Operators, RDP users, UAC state, and privileged task findings.',
+        'Confirm privileged service and task paths before changing memberships or configs.'
+    )
+Copy-Item -Force -Path (Join-Path $OutDir 'report.md') -Destination (Join-Path $OutDir 'privilege-surface-report.md')
 Save-OpsForgeSummary -OutputDirectory $OutDir -Title 'Windows local privilege surface audit' -FindingCount $findings.Count
 Write-OpsForgeInfo -Message "Output written to $OutDir" -Quiet:$Quiet

@@ -50,7 +50,26 @@ foreach ($rule in $filters) {
 
 Save-OpsForgeFindings -Findings $findings.ToArray() -OutputDirectory $OutDir
 Copy-Item -Force -Path (Join-Path $OutDir 'findings.json') -Destination (Join-Path $OutDir 'firewall-findings.json')
-@('# Windows Firewall Exposure Auditor','',"Findings: $($findings.Count)",'Raw firewall data is in `raw\`.') | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'firewall-report.md')
-Copy-Item -Force -Path (Join-Path $OutDir 'firewall-report.md') -Destination (Join-Path $OutDir 'report.md')
+Save-OpsForgeReport `
+    -OutputDirectory $OutDir `
+    -Title 'Windows Firewall Exposure Auditor' `
+    -Findings $findings.ToArray() `
+    -Stats @{
+        FirewallProfiles = @($profiles).Count
+        InboundAllowRules = @($filters).Count
+    } `
+    -EvidenceFiles @(
+        'raw\firewall-profiles.json',
+        'raw\inbound-allow-rules.json',
+        'firewall-findings.json'
+    ) `
+    -Limitations @(
+        'This catches broad exposure patterns; it does not fully prove rule shadowing.'
+    ) `
+    -NextSteps @(
+        'Restrict broad inbound rules for RDP, SMB, WinRM, SSH, and Any/Any allows.',
+        'Compare exposed ports with business need and source ranges.'
+    )
+Copy-Item -Force -Path (Join-Path $OutDir 'report.md') -Destination (Join-Path $OutDir 'firewall-report.md')
 Save-OpsForgeSummary -OutputDirectory $OutDir -Title 'Windows firewall exposure auditor' -FindingCount $findings.Count
 Write-OpsForgeInfo -Message "Output written to $OutDir" -Quiet:$Quiet

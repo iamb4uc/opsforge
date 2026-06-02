@@ -124,6 +124,26 @@ try {
 
 $autoruns.ToArray() | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\autoruns.json')
 Save-OpsForgeFindings -Findings $findings.ToArray() -OutputDirectory $OutDir
-@('# Windows Persistence Hunter','','Persistence records are stored in `raw\autoruns.json`.',"Findings: $($findings.Count)") | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'report.md')
+Save-OpsForgeReport `
+    -OutputDirectory $OutDir `
+    -Title 'Windows Persistence Hunter' `
+    -Findings $findings.ToArray() `
+    -Stats @{
+        AutorunRecords = @($autoruns).Count
+        PowerShellProfiles = @($profiles).Count
+    } `
+    -EvidenceFiles @(
+        'raw\autoruns.json',
+        'raw\wmi-event-consumers.json',
+        'raw\wmi-event-consumers.error.txt'
+    ) `
+    -Limitations @(
+        'Registry, WMI, and scheduled task visibility can be partial without admin rights.',
+        'PowerShell profile paths vary between Windows PowerShell and PowerShell 7.'
+    ) `
+    -NextSteps @(
+        'Start with AppData, Temp, encoded PowerShell, hidden task, and LOLBin findings.',
+        'Export suspicious scheduled tasks and preserve referenced binaries before cleanup.'
+    )
 Save-OpsForgeSummary -OutputDirectory $OutDir -Title 'Windows persistence hunter' -FindingCount $findings.Count
 Write-OpsForgeInfo -Message "Output written to $OutDir" -Quiet:$Quiet

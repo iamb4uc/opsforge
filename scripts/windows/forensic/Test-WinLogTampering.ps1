@@ -65,6 +65,27 @@ try {
 } catch { }
 
 Save-OpsForgeFindings -Findings $findings.ToArray() -OutputDirectory $OutDir
-@('# Windows Log Tampering Detector','',"Lookback days: $LookbackDays","Findings: $($findings.Count)") | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'report.md')
+Save-OpsForgeReport `
+    -OutputDirectory $OutDir `
+    -Title 'Windows Log Tampering Detector' `
+    -Findings $findings.ToArray() `
+    -Stats @{
+        LookbackDays = $LookbackDays
+        EventsCollected = @($events).Count
+    } `
+    -EvidenceFiles @(
+        'raw\tampering-events.json',
+        'raw\audit-policy.txt',
+        'raw\audit-policy-error.txt',
+        'raw\security-services.json'
+    ) `
+    -Limitations @(
+        'Large event gaps need deeper review than this first-pass check.',
+        'Audit policy and event log access can be restricted by local privilege.'
+    ) `
+    -NextSteps @(
+        'Review log clear, audit policy, Defender config, and service stop findings.',
+        'Correlate timestamps with admin activity and endpoint telemetry.'
+    )
 Save-OpsForgeSummary -OutputDirectory $OutDir -Title 'Windows log tampering detector' -FindingCount $findings.Count
 Write-OpsForgeInfo -Message "Output written to $OutDir" -Quiet:$Quiet

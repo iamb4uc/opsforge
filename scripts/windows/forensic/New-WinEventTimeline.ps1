@@ -54,7 +54,28 @@ $ordered | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 -Path (Join-Path
 @('# Windows Event Timeline','','| timestamp | source | event_type | severity | summary |','|---|---|---:|---|---|') + (
     $ordered | Select-Object -First 500 | ForEach-Object { "| $($_.timestamp) | $($_.source) | $($_.event_type) | $($_.severity) | $($_.summary -replace '\|','/') |" }
 ) | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'timeline.md')
-Copy-Item -Force -Path (Join-Path $OutDir 'timeline.md') -Destination (Join-Path $OutDir 'report.md')
 Save-OpsForgeFindings -Findings $findings.ToArray() -OutputDirectory $OutDir
+Save-OpsForgeReport `
+    -OutputDirectory $OutDir `
+    -Title 'Windows Event Timeline Builder' `
+    -Findings $findings.ToArray() `
+    -Stats @{
+        TimelineEvents = @($ordered).Count
+        LogsRequested = @($logs).Count
+    } `
+    -EvidenceFiles @(
+        'timeline.csv',
+        'timeline.md',
+        'raw\timeline.json',
+        'raw\event-read-errors.txt'
+    ) `
+    -Limitations @(
+        'Some event logs may be missing, disabled, or unreadable without enough privilege.',
+        'Process creation and script block events depend on audit policy being enabled.'
+    ) `
+    -NextSteps @(
+        'Review high severity account, service install, task creation, and log-clear events.',
+        'Use timeline.csv for sorting and timeline.md for quick reading.'
+    )
 Save-OpsForgeSummary -OutputDirectory $OutDir -Title 'Windows event timeline builder' -FindingCount $findings.Count
 Write-OpsForgeInfo -Message "Output written to $OutDir" -Quiet:$Quiet

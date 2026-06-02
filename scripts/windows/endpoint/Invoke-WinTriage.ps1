@@ -92,7 +92,29 @@ Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object 
 }
 
 Save-OpsForgeFindings -Findings $findings.ToArray() -OutputDirectory $OutDir
-$reportLines = @('# Windows Triage Collector', '', "- Host: $env:COMPUTERNAME", "- Findings: $($findings.Count)", '', 'Raw evidence is stored under `raw\`.')
-Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'report.md') -Value $reportLines
+Save-OpsForgeReport `
+    -OutputDirectory $OutDir `
+    -Title 'Windows Triage Collector' `
+    -Findings $findings.ToArray() `
+    -Stats @{
+        Processes = @($processes).Count
+        Services = @(Get-CimInstance Win32_Service).Count
+        ScheduledTasks = @(Get-ScheduledTask).Count
+    } `
+    -EvidenceFiles @(
+        'raw\processes.json',
+        'raw\services.json',
+        'raw\scheduled-tasks.json',
+        'raw\network-connections.json',
+        'raw\firewall-profiles.json'
+    ) `
+    -Limitations @(
+        'Some process paths and signatures may be unavailable without admin rights.',
+        'Event log and Defender data depend on local policy and installed components.'
+    ) `
+    -NextSteps @(
+        'Review suspicious process, service, task, Defender, firewall, and RDP findings.',
+        'Use the raw JSON files to confirm command lines, paths, and owners.'
+    )
 Save-OpsForgeSummary -OutputDirectory $OutDir -Title 'Windows triage collector' -FindingCount $findings.Count
 Write-OpsForgeInfo -Message "Output written to $OutDir" -Quiet:$Quiet
