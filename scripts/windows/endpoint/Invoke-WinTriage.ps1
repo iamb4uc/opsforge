@@ -50,7 +50,14 @@ $historyPaths = @(
 ) | Select-Object -Unique
 $historyPaths | Where-Object { Test-Path $_ } | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\powershell-history-paths.txt')
 
-Get-Process | ForEach-Object {
+$runningProcesses = Get-Process
+$services = Get-CimInstance Win32_Service
+$scheduledTasks = Get-ScheduledTask
+$firewallProfiles = Get-NetFirewallProfile
+$rdpListeners = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
+    Where-Object { $_.LocalPort -eq 3389 -and $_.LocalAddress -in '0.0.0.0','::' }
+
+$runningProcesses | ForEach-Object {
     $path = $null
     try { $path = $_.Path } catch { }
     if (Test-OpsForgeUserWritablePath $path) {
@@ -63,13 +70,13 @@ Get-Process | ForEach-Object {
     }
 }
 
-Get-CimInstance Win32_Service | ForEach-Object {
+$services | ForEach-Object {
     if ($_.PathName -match '(?i)\\Users\\|\\AppData\\|\\Temp\\|\\Windows\\Temp\\|powershell.*(-enc|-encodedcommand)') {
         $findings.Add((New-OpsForgeFinding "WIN-TRIAGE-SERVICE-$([Math]::Abs($_.Name.GetHashCode()))" 'Service binary path is suspicious' 'high' 'endpoint' "$($_.Name) $($_.PathName)" 'Validate service creation source and binary signature.'))
     }
 }
 
-Get-ScheduledTask | ForEach-Object {
+$scheduledTasks | ForEach-Object {
     $action = ($_.Actions | ForEach-Object { Get-OpsForgeTaskActionText $_ }) -join '; '
     if ($action -match '(?i)powershell.*(-enc|-encodedcommand)|\\AppData\\|\\Temp\\|\\Users\\Public\\') {
         $findings.Add((New-OpsForgeFinding "WIN-TRIAGE-TASK-$([Math]::Abs(($_.TaskPath + $_.TaskName).GetHashCode()))" 'Suspicious scheduled task action' 'high' 'endpoint' "$($_.TaskPath)$($_.TaskName): $action" 'Export task XML and verify task author, action, and trigger.'))
@@ -83,11 +90,11 @@ try {
     }
 } catch { }
 
-Get-NetFirewallProfile | Where-Object { -not $_.Enabled } | ForEach-Object {
+$firewallProfiles | Where-Object { -not $_.Enabled } | ForEach-Object {
     $findings.Add((New-OpsForgeFinding "WIN-TRIAGE-FW-$($_.Name)" 'Windows firewall profile is disabled' 'high' 'network' "$($_.Name) profile disabled" 'Re-enable firewall profile or document compensating controls.'))
 }
 
-Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.LocalPort -eq 3389 -and $_.LocalAddress -in '0.0.0.0','::' } | ForEach-Object {
+$rdpListeners | ForEach-Object {
     $findings.Add((New-OpsForgeFinding 'WIN-TRIAGE-RDP-EXPOSED' 'RDP listens on all interfaces' 'high' 'network' "$($_.LocalAddress):$($_.LocalPort)" 'Restrict RDP exposure with firewall policy and validate remote access requirements.'))
 }
 
@@ -97,9 +104,9 @@ Save-OpsForgeReport `
     -Title 'Windows Triage Collector' `
     -Findings $findings.ToArray() `
     -Stats @{
-        Processes = @($processes).Count
-        Services = @(Get-CimInstance Win32_Service).Count
-        ScheduledTasks = @(Get-ScheduledTask).Count
+        Processes = @($runningProcesses).Count
+        Services = @($services).Count
+        ScheduledTasks = @($scheduledTasks).Count
     } `
     -EvidenceFiles @(
         'raw\processes.json',
