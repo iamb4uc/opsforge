@@ -108,6 +108,14 @@ function Get-LatestOutputDirectory {
         Select-Object -Last 1 -ExpandProperty FullName
 }
 
+function Get-LatestProfileDirectory {
+    param([string]$Base, [string]$Profile)
+    Get-ChildItem -Path $Base -Directory |
+        Where-Object { $_.Name -like "opsforge-windows-$Profile-*" } |
+        Sort-Object LastWriteTime |
+        Select-Object -Last 1 -ExpandProperty FullName
+}
+
 function Test-Parser {
     Write-TestLine 'checking powershell parser'
     $files = Get-ChildItem -Path (Join-Path $Root 'bin'), (Join-Path $Root 'lib'), (Join-Path $Root 'scripts'), (Join-Path $Root 'tests\pester') -Recurse -File -Include *.ps1
@@ -172,14 +180,58 @@ function Invoke-SafeRuntimeCheck {
     }
 }
 
+function Test-ContractsUnder {
+    param([string]$Base)
+    $count = 0
+    $findings = Get-ChildItem -Path $Base -Recurse -File -Filter findings.json |
+        Where-Object { Split-Path -Leaf (Split-Path -Parent $_.FullName) -ne 'normalized' }
+    foreach ($finding in $findings) {
+        Test-OutputContract -OutputDirectory (Split-Path -Parent $finding.FullName)
+        $count++
+    }
+    if ($count -eq 0) { Fail-Test "no tool output dirs found under profile: $Base" }
+    Write-TestLine "validated profile output contracts=$count"
+}
+
+function Invoke-SafeProfileCheck {
+    param(
+        [string]$Profile,
+        [string]$OutputRoot
+    )
+
+    Write-Host "::group::windows-$Profile"
+    try {
+        $wrapper = Join-Path $Root 'bin\opsforge.ps1'
+        & $wrapper windows $Profile -OutputPath $OutputRoot -Json -Markdown -Quiet
+        $exitCode = Get-Variable -Name LASTEXITCODE -ValueOnly -ErrorAction SilentlyContinue
+        if ($null -ne $exitCode -and $exitCode -ne 0) { Fail-Test "windows $Profile exited with $exitCode" }
+        $outDir = Get-LatestProfileDirectory -Base $OutputRoot -Profile $Profile
+        if (-not $outDir) { Fail-Test "windows $Profile did not create profile output" }
+        Write-TestLine "windows $Profile output: $outDir"
+        foreach ($file in @('run-summary.md','run-summary.json')) {
+            $path = Join-Path $outDir $file
+            if (-not (Test-Path -Path $path -PathType Leaf)) { Fail-Test "missing profile summary file: $path" }
+            if ((Get-Item $path).Length -eq 0) { Fail-Test "empty profile summary file: $path" }
+        }
+        Get-Content -Raw -Path (Join-Path $outDir 'run-summary.json') | ConvertFrom-Json | Out-Null
+        Test-ContractsUnder -Base $outDir
+    } finally {
+        Write-Host "::endgroup::"
+    }
+}
+
 function Test-Runtime {
     Write-TestLine 'running safe windows runtime checks'
     $outputRoot = New-RuntimeOutputRoot
+    & (Join-Path $Root 'bin\opsforge.ps1') doctor -OutputPath $outputRoot | Out-Null
     Invoke-SafeRuntimeCheck -Name 'triage' -Arguments @('windows','triage') -ScriptName 'Invoke-WinTriage' -OutputRoot $outputRoot
     Invoke-SafeRuntimeCheck -Name 'persistence' -Arguments @('windows','persistence') -ScriptName 'Find-WinPersistence' -OutputRoot $outputRoot
     Invoke-SafeRuntimeCheck -Name 'tasks' -Arguments @('windows','tasks') -ScriptName 'Test-WinScheduledTasks' -OutputRoot $outputRoot
     Invoke-SafeRuntimeCheck -Name 'network' -Arguments @('windows','network') -ScriptName 'Get-WinNetworkExposure' -OutputRoot $outputRoot
     Invoke-SafeRuntimeCheck -Name 'timeline' -Arguments @('windows','timeline') -ScriptName 'New-WinEventTimeline' -OutputRoot $outputRoot
+    Invoke-SafeProfileCheck -Profile 'quick' -OutputRoot $outputRoot
+    Invoke-SafeProfileCheck -Profile 'ir' -OutputRoot $outputRoot
+    Invoke-SafeProfileCheck -Profile 'full' -OutputRoot $outputRoot
     Write-TestLine "windows runtime evidence: $outputRoot"
 }
 
