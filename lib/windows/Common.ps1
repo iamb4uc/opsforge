@@ -200,6 +200,31 @@ function Get-OpsForgeSafeFileName {
     return ($Name -replace '[\\/:*?"<>| ]', '_')
 }
 
+function ConvertTo-OpsForgeText {
+    param([AllowNull()][object]$Value)
+
+    if ($null -eq $Value) {
+        return ''
+    }
+
+    if ($Value -is [array]) {
+        return (@($Value) | ForEach-Object { [string]$_ }) -join '; '
+    }
+
+    return [string]$Value
+}
+
+function Get-OpsForgeIdSeed {
+    param([AllowNull()][object]$Value)
+
+    $text = ConvertTo-OpsForgeText $Value
+    $hash = [int64]$text.GetHashCode()
+    if ($hash -lt 0) {
+        $hash = -$hash
+    }
+    return $hash
+}
+
 function Get-OpsForgeTaskActionText {
     param([object]$Action)
     if ($null -eq $Action) { return '' }
