@@ -59,6 +59,36 @@ function Add-CommandFinding {
     }
 }
 
+function Save-PersistenceFallbackReport {
+    param([string]$Message)
+
+    $findingCount = [int]$findings.Count
+    $autorunCount = [int]$autoruns.Count
+    $lines = @(
+        '# Windows Persistence Hunter',
+        '',
+        "- Host: $env:COMPUTERNAME",
+        "- Findings: $findingCount",
+        "- Autorun records: $autorunCount",
+        '',
+        '## Evidence Files',
+        '',
+        '- raw\autoruns.json',
+        '- findings.json',
+        '',
+        '## Collection Limitations',
+        '',
+        "- $Message",
+        '- Registry, WMI, and scheduled task visibility can be partial without admin rights.',
+        '',
+        '## Next Steps',
+        '',
+        '- Review findings.json and raw\autoruns.json.',
+        '- Preserve suspicious referenced files before cleanup.'
+    )
+    Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'report.md') -Value $lines
+}
+
 $runKeys = @(
     'HKLM:\Software\Microsoft\Windows\CurrentVersion\Run',
     'HKLM:\Software\Microsoft\Windows\CurrentVersion\RunOnce',
@@ -218,28 +248,7 @@ try {
 } catch {
     $message = "Unable to write full report: $($_.Exception.Message)"
     $message | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\report-write-error.txt')
-    @(
-        '# Windows Persistence Hunter',
-        '',
-        "- Host: $env:COMPUTERNAME",
-        "- Findings: $($findings.Count)",
-        "- Autorun records: $(@($autoruns).Count)",
-        '',
-        '## Evidence Files',
-        '',
-        '- raw\autoruns.json',
-        '- findings.json',
-        '',
-        '## Collection Limitations',
-        '',
-        "- $message",
-        '- Registry, WMI, and scheduled task visibility can be partial without admin rights.',
-        '',
-        '## Next Steps',
-        '',
-        '- Review findings.json and raw\autoruns.json.',
-        '- Preserve suspicious referenced files before cleanup.'
-    ) | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'report.md')
+    Save-PersistenceFallbackReport -Message $message
 }
 Save-OpsForgeSummary -OutputDirectory $OutDir -Title 'Windows persistence hunter' -FindingCount $findings.Count
 Write-OpsForgeInfo -Message "Output written to $OutDir" -Quiet:$Quiet

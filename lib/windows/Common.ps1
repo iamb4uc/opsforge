@@ -66,8 +66,12 @@ function Save-OpsForgeSummary {
         [string]$Title,
         [int]$FindingCount
     )
-    $lines = @($Title, "Output: $OutputDirectory", "Findings: $FindingCount")
-    Set-Content -Encoding UTF8 -Path (Join-Path $OutputDirectory 'summary.txt') -Value $lines
+    [string[]]$lines = @(
+        [string]$Title,
+        "Output: $OutputDirectory",
+        "Findings: $FindingCount"
+    )
+    Set-Content -Encoding UTF8 -LiteralPath (Join-Path $OutputDirectory 'summary.txt') -Value $lines
 }
 
 function Save-OpsForgeReport {
@@ -118,7 +122,7 @@ function Save-OpsForgeReport {
         $lines += '## Collected'
         $lines += ''
         foreach ($key in ($statMap.Keys | Sort-Object)) {
-            $lines += "- ${key}: $($statMap[$key])"
+            $lines += "- ${key}: $(ConvertTo-OpsForgeText $statMap[$key])"
         }
     }
 
@@ -158,7 +162,7 @@ function Save-OpsForgeReport {
         $lines += '- summary.txt'
     } else {
         foreach ($file in $EvidenceFiles) {
-            $lines += "- $file"
+            $lines += "- $(ConvertTo-OpsForgeText $file)"
         }
     }
 
@@ -169,7 +173,7 @@ function Save-OpsForgeReport {
         $lines += 'No explicit limitations recorded. Some data can still be partial without admin rights.'
     } else {
         foreach ($limitation in $Limitations) {
-            $lines += "- $limitation"
+            $lines += "- $(ConvertTo-OpsForgeText $limitation)"
         }
     }
 
@@ -182,11 +186,12 @@ function Save-OpsForgeReport {
         $lines += '- Treat missing data as partial collection, not proof of absence.'
     } else {
         foreach ($step in $NextSteps) {
-            $lines += "- $step"
+            $lines += "- $(ConvertTo-OpsForgeText $step)"
         }
     }
 
-    Set-Content -Encoding UTF8 -Path (Join-Path $OutputDirectory 'report.md') -Value $lines
+    [string[]]$reportLines = @($lines | ForEach-Object { ConvertTo-OpsForgeText $_ })
+    Set-Content -Encoding UTF8 -LiteralPath (Join-Path $OutputDirectory 'report.md') -Value $reportLines
 }
 
 function Test-OpsForgeUserWritablePath {
