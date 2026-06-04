@@ -16,6 +16,24 @@ $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot '..\..\..')
 $OutDir = New-OpsForgeOutputDirectory -OutputPath $OutputPath -ScriptName 'Find-WinPersistence'
 $findings = New-Object System.Collections.Generic.List[object]
 $autoruns = New-Object System.Collections.Generic.List[object]
+$limitations = New-Object System.Collections.Generic.List[string]
+$profiles = @()
+
+function Invoke-PersistenceStage {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][scriptblock]$ScriptBlock
+    )
+
+    try {
+        & $ScriptBlock
+    } catch {
+        $message = "$Name collection failed: $($_.Exception.Message)"
+        $limitations.Add($message)
+        $safeName = Get-OpsForgeSafeFileName $Name
+        $message | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir "raw\$safeName.error.txt")
+    }
+}
 
 function Add-CommandFinding {
     param(
@@ -47,36 +65,42 @@ $runKeys = @(
     'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run',
     'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce'
 )
-foreach ($key in $runKeys) {
-    if (Test-Path $key) {
-        $props = Get-ItemProperty -Path $key
-        foreach ($prop in $props.PSObject.Properties | Where-Object { $_.Name -notmatch '^PS' }) {
-            $record = [pscustomobject]@{ Source = $key; Name = $prop.Name; Command = (ConvertTo-OpsForgeText $prop.Value) }
-            $autoruns.Add($record)
-            Add-CommandFinding -Source $record.Source -Name $record.Name -Command $record.Command
+Invoke-PersistenceStage -Name 'run-keys' -ScriptBlock {
+    foreach ($key in $runKeys) {
+        if (Test-Path $key) {
+            $props = Get-ItemProperty -Path $key
+            foreach ($prop in $props.PSObject.Properties | Where-Object { $_.Name -notmatch '^PS' }) {
+                $record = [pscustomobject]@{ Source = $key; Name = $prop.Name; Command = (ConvertTo-OpsForgeText $prop.Value) }
+                $autoruns.Add($record)
+                Add-CommandFinding -Source $record.Source -Name $record.Name -Command $record.Command
+            }
         }
     }
 }
 
-$services = Get-CimInstance Win32_Service
-foreach ($svc in $services) {
-    $serviceName = ConvertTo-OpsForgeText $svc.Name
-    $servicePath = ConvertTo-OpsForgeText $svc.PathName
-    $autoruns.Add([pscustomobject]@{ Source = 'Service'; Name = $serviceName; Command = $servicePath })
-    if ($servicePath -match '(?i)\\AppData\\|\\Temp\\|\\Users\\Public\\|powershell.*(-enc|-encodedcommand)') {
-        Add-CommandFinding -Source 'Service' -Name $serviceName -Command $servicePath
-        $findings.Add((New-OpsForgeFinding "WIN-PERSIST-SERVICE-$(Get-OpsForgeIdSeed $serviceName)" 'Service has suspicious persistence path or arguments' 'high' 'persistence' "$serviceName $servicePath" 'Validate service creation time, binary signature, and owner.'))
+Invoke-PersistenceStage -Name 'services' -ScriptBlock {
+    $services = Get-CimInstance Win32_Service
+    foreach ($svc in $services) {
+        $serviceName = ConvertTo-OpsForgeText $svc.Name
+        $servicePath = ConvertTo-OpsForgeText $svc.PathName
+        $autoruns.Add([pscustomobject]@{ Source = 'Service'; Name = $serviceName; Command = $servicePath })
+        if ($servicePath -match '(?i)\\AppData\\|\\Temp\\|\\Users\\Public\\|powershell.*(-enc|-encodedcommand)') {
+            Add-CommandFinding -Source 'Service' -Name $serviceName -Command $servicePath
+            $findings.Add((New-OpsForgeFinding "WIN-PERSIST-SERVICE-$(Get-OpsForgeIdSeed $serviceName)" 'Service has suspicious persistence path or arguments' 'high' 'persistence' "$serviceName $servicePath" 'Validate service creation time, binary signature, and owner.'))
+        }
     }
 }
 
-Get-ScheduledTask | ForEach-Object {
-    $action = ($_.Actions | ForEach-Object { Get-OpsForgeTaskActionText $_ }) -join '; '
-    $taskName = "$(ConvertTo-OpsForgeText $_.TaskPath)$(ConvertTo-OpsForgeText $_.TaskName)"
-    $autoruns.Add([pscustomobject]@{ Source = 'ScheduledTask'; Name = $taskName; Command = $action })
-    if ($_.Settings.Hidden) {
-        $findings.Add((New-OpsForgeFinding "WIN-PERSIST-HIDDEN-TASK-$(Get-OpsForgeIdSeed $taskName)" 'Hidden scheduled task' 'medium' 'persistence' $taskName 'Confirm task legitimacy and export XML for review.'))
+Invoke-PersistenceStage -Name 'scheduled-tasks' -ScriptBlock {
+    Get-ScheduledTask | ForEach-Object {
+        $action = ($_.Actions | ForEach-Object { Get-OpsForgeTaskActionText $_ }) -join '; '
+        $taskName = "$(ConvertTo-OpsForgeText $_.TaskPath)$(ConvertTo-OpsForgeText $_.TaskName)"
+        $autoruns.Add([pscustomobject]@{ Source = 'ScheduledTask'; Name = $taskName; Command = $action })
+        if ($_.Settings.Hidden) {
+            $findings.Add((New-OpsForgeFinding "WIN-PERSIST-HIDDEN-TASK-$(Get-OpsForgeIdSeed $taskName)" 'Hidden scheduled task' 'medium' 'persistence' $taskName 'Confirm task legitimacy and export XML for review.'))
+        }
+        Add-CommandFinding -Source 'ScheduledTask' -Name $taskName -Command $action
     }
-    Add-CommandFinding -Source 'ScheduledTask' -Name $taskName -Command $action
 }
 
 $startupFolders = @(
@@ -84,10 +108,12 @@ $startupFolders = @(
     "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
 )
 foreach ($folder in $startupFolders) {
-    if (Test-Path $folder) {
-        Get-ChildItem -Force -Path $folder | ForEach-Object {
-            $autoruns.Add([pscustomobject]@{ Source = 'StartupFolder'; Name = $_.FullName; Command = $_.FullName })
-            Add-CommandFinding -Source 'StartupFolder' -Name $_.Name -Command $_.FullName
+    Invoke-PersistenceStage -Name "startup-folder-$folder" -ScriptBlock {
+        if (Test-Path $folder) {
+            Get-ChildItem -Force -Path $folder | ForEach-Object {
+                $autoruns.Add([pscustomobject]@{ Source = 'StartupFolder'; Name = $_.FullName; Command = $_.FullName })
+                Add-CommandFinding -Source 'StartupFolder' -Name $_.Name -Command $_.FullName
+            }
         }
     }
 }
@@ -98,18 +124,20 @@ $profileNames = @(
     'CurrentUserAllHosts',
     'CurrentUserCurrentHost'
 )
-$profiles = @(
-    foreach ($profileName in $profileNames) {
-        $property = $PROFILE.PSObject.Properties[$profileName]
-        if ($property -and $property.Value -and (Test-Path $property.Value)) {
-            $property.Value
+Invoke-PersistenceStage -Name 'powershell-profiles' -ScriptBlock {
+    $profiles = @(
+        foreach ($profileName in $profileNames) {
+            $property = $PROFILE.PSObject.Properties[$profileName]
+            if ($property -and $property.Value -and (Test-Path $property.Value)) {
+                $property.Value
+            }
         }
+    ) | Select-Object -Unique
+    foreach ($profilePath in $profiles) {
+        $content = Get-Content -Raw -Path $profilePath -ErrorAction SilentlyContinue
+        $autoruns.Add([pscustomobject]@{ Source = 'PowerShellProfile'; Name = $profilePath; Command = $content })
+        Add-CommandFinding -Source 'PowerShellProfile' -Name $profilePath -Command $content
     }
-) | Select-Object -Unique
-foreach ($profilePath in $profiles) {
-    $content = Get-Content -Raw -Path $profilePath -ErrorAction SilentlyContinue
-    $autoruns.Add([pscustomobject]@{ Source = 'PowerShellProfile'; Name = $profilePath; Command = $content })
-    Add-CommandFinding -Source 'PowerShellProfile' -Name $profilePath -Command $content
 }
 
 $specialKeys = @(
@@ -118,13 +146,15 @@ $specialKeys = @(
     'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options'
 )
 foreach ($key in $specialKeys) {
-    if (Test-Path $key) {
-        Get-ChildItem -Path $key -ErrorAction SilentlyContinue | ForEach-Object {
-            $props = Get-ItemProperty -Path $_.PSPath -ErrorAction SilentlyContinue
-            $props.PSObject.Properties | Where-Object { $_.Name -match 'Debugger|Shell|Userinit|AppInit_DLLs' } | ForEach-Object {
-                $value = ConvertTo-OpsForgeText $_.Value
-                $autoruns.Add([pscustomobject]@{ Source = $_.Name; Name = $key; Command = $value })
-                Add-CommandFinding -Source $_.Name -Name $key -Command $value
+    Invoke-PersistenceStage -Name "registry-$key" -ScriptBlock {
+        if (Test-Path $key) {
+            Get-ChildItem -Path $key -ErrorAction SilentlyContinue | ForEach-Object {
+                $props = Get-ItemProperty -Path $_.PSPath -ErrorAction SilentlyContinue
+                $props.PSObject.Properties | Where-Object { $_.Name -match 'Debugger|Shell|Userinit|AppInit_DLLs' } | ForEach-Object {
+                    $value = ConvertTo-OpsForgeText $_.Value
+                    $autoruns.Add([pscustomobject]@{ Source = $_.Name; Name = $key; Command = $value })
+                    Add-CommandFinding -Source $_.Name -Name $key -Command $value
+                }
             }
         }
     }
@@ -136,7 +166,9 @@ try {
         ConvertTo-Json -Depth 3 |
         Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\wmi-event-consumers.json')
 } catch {
-    "Unable to read WMI event consumers: $($_.Exception.Message)" | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\wmi-event-consumers.error.txt')
+    $message = "Unable to read WMI event consumers: $($_.Exception.Message)"
+    $limitations.Add($message)
+    $message | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\wmi-event-consumers.error.txt')
 }
 
 try {
@@ -160,6 +192,11 @@ try {
 }
 
 try {
+    $reportLimitations = @(
+        'Registry, WMI, and scheduled task visibility can be partial without admin rights.',
+        'PowerShell profile paths vary between Windows PowerShell and PowerShell 7.'
+    ) + $limitations.ToArray()
+
     Save-OpsForgeReport `
         -OutputDirectory $OutDir `
         -Title 'Windows Persistence Hunter' `
@@ -173,10 +210,7 @@ try {
             'raw\wmi-event-consumers.json',
             'raw\wmi-event-consumers.error.txt'
         ) `
-        -Limitations @(
-            'Registry, WMI, and scheduled task visibility can be partial without admin rights.',
-            'PowerShell profile paths vary between Windows PowerShell and PowerShell 7.'
-        ) `
+        -Limitations $reportLimitations `
         -NextSteps @(
             'Start with AppData, Temp, encoded PowerShell, hidden task, and LOLBin findings.',
             'Export suspicious scheduled tasks and preserve referenced binaries before cleanup.'
