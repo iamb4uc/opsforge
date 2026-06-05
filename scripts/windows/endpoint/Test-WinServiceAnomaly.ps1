@@ -36,7 +36,18 @@ foreach ($svc in $services) {
 }
 
 Save-OpsForgeFindings -Findings $findings.ToArray() -OutputDirectory $OutDir
-@('# Windows Service Anomaly Auditor','',"Services collected: $(@($services).Count)","Findings: $($findings.Count)") | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'report.md')
+Save-OpsForgeReport `
+    -OutputDirectory $OutDir `
+    -Title 'Windows Service Anomaly Auditor' `
+    -Findings $findings.ToArray() `
+    -Stats @{ Services = @($services).Count } `
+    -EvidenceFiles @('raw\services.json') `
+    -Limitations @(
+        'Service creation time and file ACL review are not always available from Win32_Service alone.'
+    ) `
+    -NextSteps @(
+        'Review high severity service paths first.',
+        'Check binary signatures and directory permissions for flagged services.'
+    )
 Save-OpsForgeSummary -OutputDirectory $OutDir -Title 'Windows service anomaly auditor' -FindingCount $findings.Count
 Write-OpsForgeInfo -Message "Output written to $OutDir" -Quiet:$Quiet
-

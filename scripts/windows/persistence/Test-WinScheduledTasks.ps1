@@ -69,7 +69,19 @@ foreach ($task in $tasks) {
 }
 
 Save-OpsForgeFindings -Findings $findings.ToArray() -OutputDirectory $OutDir
-$reportLines = @('# Windows Scheduled Task Auditor', '', "- Host: $env:COMPUTERNAME", "- Tasks collected: $(@($tasks).Count)", "- Findings: $($findings.Count)", '', 'Raw task data: `raw\scheduled-tasks.json`')
-Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'report.md') -Value $reportLines
+Save-OpsForgeReport `
+    -OutputDirectory $OutDir `
+    -Title 'Windows Scheduled Task Auditor' `
+    -Findings $findings.ToArray() `
+    -Stats @{ ScheduledTasks = @($tasks).Count } `
+    -EvidenceFiles @('raw\scheduled-tasks.json') `
+    -Limitations @(
+        'Some task metadata may be missing when task info cannot be read.',
+        'Task creation time is not exposed cleanly by every scheduled task API.'
+    ) `
+    -NextSteps @(
+        'Review encoded PowerShell, user-writable paths, hidden tasks, and logon triggers.',
+        'Export suspicious task XML before disabling anything.'
+    )
 Save-OpsForgeSummary -OutputDirectory $OutDir -Title 'Windows scheduled task auditor' -FindingCount $findings.Count
 Write-OpsForgeInfo -Message "Output written to $OutDir" -Quiet:$Quiet

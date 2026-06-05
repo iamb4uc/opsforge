@@ -43,6 +43,23 @@ try {
 }
 
 Save-OpsForgeFindings -Findings $findings.ToArray() -OutputDirectory $OutDir
-@('# Windows Defender Status Auditor','',"Findings: $($findings.Count)") | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'report.md')
+Save-OpsForgeReport `
+    -OutputDirectory $OutDir `
+    -Title 'Windows Defender Status Auditor' `
+    -Findings $findings.ToArray() `
+    -EvidenceFiles @(
+        'raw\defender-status.json',
+        'raw\defender-preferences.json',
+        'raw\threat-history.json',
+        'raw\defender-error.txt'
+    ) `
+    -Limitations @(
+        'Defender cmdlets may be unavailable when Defender is removed or managed differently.',
+        'Some settings require admin rights or current Defender platform support.'
+    ) `
+    -NextSteps @(
+        'Review disabled protection, stale signatures, and user-writable exclusions first.',
+        'Confirm whether any exclusion is expected before removing it.'
+    )
 Save-OpsForgeSummary -OutputDirectory $OutDir -Title 'Windows Defender status auditor' -FindingCount $findings.Count
 Write-OpsForgeInfo -Message "Output written to $OutDir" -Quiet:$Quiet

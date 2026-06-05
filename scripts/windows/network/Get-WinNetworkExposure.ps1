@@ -58,7 +58,28 @@ foreach ($record in $records) {
 }
 
 Save-OpsForgeFindings -Findings $findings.ToArray() -OutputDirectory $OutDir
-$reportLines = @('# Windows Network Exposure Mapper', '', "- Host: $env:COMPUTERNAME", "- Listening sockets: $(@($records).Count)", "- Findings: $($findings.Count)", '', 'Raw data is stored under `raw\`.')
-Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'report.md') -Value $reportLines
+Save-OpsForgeReport `
+    -OutputDirectory $OutDir `
+    -Title 'Windows Network Exposure Mapper' `
+    -Findings $findings.ToArray() `
+    -Stats @{
+        ListeningSockets = @($records).Count
+        TcpConnections = @($connections).Count
+    } `
+    -EvidenceFiles @(
+        'raw\listening-tcp.json',
+        'raw\tcp-connections.json',
+        'raw\dns-cache.json',
+        'raw\net-adapters.json',
+        'raw\routes.json'
+    ) `
+    -Limitations @(
+        'Process paths can be missing for protected processes without enough privilege.',
+        'Firewall rule mapping is handled by the firewall auditor, not this mapper.'
+    ) `
+    -NextSteps @(
+        'Review admin ports listening on all interfaces.',
+        'Check unknown process paths and user-writable listener binaries.'
+    )
 Save-OpsForgeSummary -OutputDirectory $OutDir -Title 'Windows network exposure mapper' -FindingCount $findings.Count
 Write-OpsForgeInfo -Message "Output written to $OutDir" -Quiet:$Quiet
