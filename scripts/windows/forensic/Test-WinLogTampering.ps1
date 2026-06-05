@@ -24,6 +24,39 @@ function Add-EventFinding {
     $findings.Add((New-OpsForgeFinding "$IdPrefix-$seed" $Title $Severity 'forensic' "$($Event.LogName) id=$($Event.Id) time=$($Event.TimeCreated) record=$($Event.RecordId)" 'Correlate with administrative activity, EDR telemetry, and change tickets.'))
 }
 
+function Save-LogTamperingFallbackReport {
+    param([string]$Message)
+
+    [string[]]$lines = @(
+        '# Windows Log Tampering Detector',
+        '',
+        "- Host: $env:COMPUTERNAME",
+        "- Findings: $([int]$findings.Count)",
+        "- Events collected: $([int]$events.Count)",
+        "- Lookback days: $LookbackDays",
+        '',
+        '## Evidence Files',
+        '',
+        '- raw\tampering-events.json',
+        '- raw\audit-policy.txt',
+        '- raw\audit-policy-error.txt',
+        '- raw\security-services.json',
+        '- findings.json',
+        '',
+        '## Collection Limitations',
+        '',
+        "- $Message",
+        '- Large event gaps need deeper review than this first-pass check.',
+        '- Audit policy and event log access can be restricted by local privilege.',
+        '',
+        '## Next Steps',
+        '',
+        '- Review log clear, audit policy, Defender config, and service stop findings.',
+        '- Correlate timestamps with admin activity and endpoint telemetry.'
+    )
+    Set-Content -Encoding UTF8 -LiteralPath (Join-Path $OutDir 'report.md') -Value $lines
+}
+
 $events = New-Object System.Collections.Generic.List[object]
 foreach ($query in @(
     @{ LogName='Security'; Id=1102 },
@@ -65,27 +98,48 @@ try {
 } catch { }
 
 Save-OpsForgeFindings -Findings $findings.ToArray() -OutputDirectory $OutDir
-Save-OpsForgeReport `
-    -OutputDirectory $OutDir `
-    -Title 'Windows Log Tampering Detector' `
-    -Findings $findings.ToArray() `
-    -Stats @{
-        LookbackDays = $LookbackDays
-        EventsCollected = @($events).Count
-    } `
-    -EvidenceFiles @(
-        'raw\tampering-events.json',
-        'raw\audit-policy.txt',
-        'raw\audit-policy-error.txt',
-        'raw\security-services.json'
-    ) `
-    -Limitations @(
-        'Large event gaps need deeper review than this first-pass check.',
-        'Audit policy and event log access can be restricted by local privilege.'
-    ) `
-    -NextSteps @(
-        'Review log clear, audit policy, Defender config, and service stop findings.',
-        'Correlate timestamps with admin activity and endpoint telemetry.'
+try {
+    Save-OpsForgeReport `
+        -OutputDirectory $OutDir `
+        -Title 'Windows Log Tampering Detector' `
+        -Findings $findings.ToArray() `
+        -Stats @{
+            LookbackDays = $LookbackDays
+            EventsCollected = @($events).Count
+        } `
+        -EvidenceFiles @(
+            'raw\tampering-events.json',
+            'raw\audit-policy.txt',
+            'raw\audit-policy-error.txt',
+            'raw\security-services.json'
+        ) `
+        -Limitations @(
+            'Large event gaps need deeper review than this first-pass check.',
+            'Audit policy and event log access can be restricted by local privilege.'
+        ) `
+        -NextSteps @(
+            'Review log clear, audit policy, Defender config, and service stop findings.',
+            'Correlate timestamps with admin activity and endpoint telemetry.'
+        )
+} catch {
+    $message = "Unable to write full report: $($_.Exception.Message)"
+    [string[]]$details = @(
+        $message,
+        "Script stack: $($_.ScriptStackTrace)"
     )
-Save-OpsForgeSummary -OutputDirectory $OutDir -Title 'Windows log tampering detector' -FindingCount $findings.Count
+    Set-Content -Encoding UTF8 -LiteralPath (Join-Path $OutDir 'raw\report-write-error.txt') -Value $details
+    Save-LogTamperingFallbackReport -Message $message
+}
+
+try {
+    Save-OpsForgeSummary -OutputDirectory $OutDir -Title 'Windows log tampering detector' -FindingCount $findings.Count
+} catch {
+    [string[]]$summary = @(
+        'Windows log tampering detector',
+        "Output: $OutDir",
+        "Findings: $([int]$findings.Count)",
+        "Summary writer failed: $($_.Exception.Message)"
+    )
+    Set-Content -Encoding UTF8 -LiteralPath (Join-Path $OutDir 'summary.txt') -Value $summary
+}
 Write-OpsForgeInfo -Message "Output written to $OutDir" -Quiet:$Quiet
