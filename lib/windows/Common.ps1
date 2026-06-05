@@ -92,13 +92,6 @@ function Save-OpsForgeReport {
         $statMap = $Stats
     }
     $severityOrder = @('critical','high','medium','low','info')
-    $severityRank = @{
-        critical = 0
-        high = 1
-        medium = 2
-        low = 3
-        info = 4
-    }
     $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
     $lines = @()
 
@@ -113,7 +106,13 @@ function Save-OpsForgeReport {
     $lines += ''
     $lines += "- Total: $($findingList.Count)"
     foreach ($severity in $severityOrder) {
-        $count = @($findingList | Where-Object { $_.severity -eq $severity }).Count
+        $count = 0
+        foreach ($finding in $findingList) {
+            $findingSeverity = Get-OpsForgeObjectField -InputObject $finding -Name 'severity'
+            if ($findingSeverity -eq $severity) {
+                $count++
+            }
+        }
         $lines += "- ${severity}: $count"
     }
 
@@ -129,27 +128,26 @@ function Save-OpsForgeReport {
     $lines += ''
     $lines += '## Top Findings'
     $lines += ''
-    $rankedFindings = foreach ($finding in $findingList) {
-        $severity = [string]$finding.severity
-        $rank = 99
-        if ($severity -and $severityRank.ContainsKey($severity)) {
-            $rank = $severityRank[$severity]
-        }
-        [pscustomobject]@{
-            Rank = $rank
-            Severity = $severity
-            Title = [string]$finding.title
-            Evidence = [string]$finding.evidence
+    $topFindingLines = @()
+    foreach ($severity in $severityOrder) {
+        foreach ($finding in $findingList) {
+            if ($topFindingLines.Count -ge 10) {
+                break
+            }
+            $findingSeverity = Get-OpsForgeObjectField -InputObject $finding -Name 'severity'
+            if ($findingSeverity -ne $severity) {
+                continue
+            }
+            $title = Get-OpsForgeObjectField -InputObject $finding -Name 'title'
+            $evidence = Get-OpsForgeObjectField -InputObject $finding -Name 'evidence'
+            $topFindingLines += "- [$($severity.ToUpperInvariant())] $title - $evidence"
         }
     }
-    $topFindings = @($rankedFindings | Sort-Object Rank, Title | Select-Object -First 10)
-    if (@($topFindings).Count -eq 0) {
+    if ($topFindingLines.Count -eq 0) {
         $lines += 'No findings recorded.'
     } else {
-        foreach ($finding in $topFindings) {
-            $severity = ([string]$finding.Severity).ToUpperInvariant()
-            if (-not $severity) { $severity = 'INFO' }
-            $lines += "- [$severity] $($finding.Title) - $($finding.Evidence)"
+        foreach ($findingLine in $topFindingLines) {
+            $lines += $findingLine
         }
     }
 
@@ -217,6 +215,24 @@ function ConvertTo-OpsForgeText {
     }
 
     return [string]$Value
+}
+
+function Get-OpsForgeObjectField {
+    param(
+        [AllowNull()][object]$InputObject,
+        [Parameter(Mandatory = $true)][string]$Name
+    )
+
+    if ($null -eq $InputObject) {
+        return ''
+    }
+
+    $property = $InputObject.PSObject.Properties[$Name]
+    if ($null -eq $property) {
+        return ''
+    }
+
+    return ConvertTo-OpsForgeText $property.Value
 }
 
 function Get-OpsForgeIdSeed {

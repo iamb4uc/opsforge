@@ -64,7 +64,7 @@ function Save-PersistenceFallbackReport {
 
     $findingCount = [int]$findings.Count
     $autorunCount = [int]$autoruns.Count
-    $lines = @(
+    [string[]]$lines = @(
         '# Windows Persistence Hunter',
         '',
         "- Host: $env:COMPUTERNAME",
@@ -86,7 +86,7 @@ function Save-PersistenceFallbackReport {
         '- Review findings.json and raw\autoruns.json.',
         '- Preserve suspicious referenced files before cleanup.'
     )
-    Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'report.md') -Value $lines
+    Set-Content -Encoding UTF8 -LiteralPath (Join-Path $OutDir 'report.md') -Value $lines
 }
 
 $runKeys = @(
