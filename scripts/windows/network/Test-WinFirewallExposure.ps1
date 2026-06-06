@@ -50,14 +50,17 @@ foreach ($rule in $filters) {
 
 Save-OpsForgeFindings -Findings $findings.ToArray() -OutputDirectory $OutDir
 Copy-Item -Force -Path (Join-Path $OutDir 'findings.json') -Destination (Join-Path $OutDir 'firewall-findings.json')
+$profileCount = [int](@($profiles).Count)
+$inboundAllowCount = [int](@($filters).Count)
+$reportStats = @{
+    FirewallProfiles = $profileCount
+    InboundAllowRules = $inboundAllowCount
+}
 Save-OpsForgeReport `
     -OutputDirectory $OutDir `
     -Title 'Windows Firewall Exposure Auditor' `
     -Findings $findings.ToArray() `
-    -Stats @{
-        FirewallProfiles = @($profiles).Count
-        InboundAllowRules = @($filters).Count
-    } `
+    -Stats $reportStats `
     -EvidenceFiles @(
         'raw\firewall-profiles.json',
         'raw\inbound-allow-rules.json',

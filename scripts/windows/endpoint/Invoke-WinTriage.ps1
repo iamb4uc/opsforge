@@ -99,15 +99,19 @@ $rdpListeners | ForEach-Object {
 }
 
 Save-OpsForgeFindings -Findings $findings.ToArray() -OutputDirectory $OutDir
+$processCount = [int](@($runningProcesses).Count)
+$serviceCount = [int](@($services).Count)
+$scheduledTaskCount = [int](@($scheduledTasks).Count)
+$reportStats = @{
+    Processes = $processCount
+    Services = $serviceCount
+    ScheduledTasks = $scheduledTaskCount
+}
 Save-OpsForgeReport `
     -OutputDirectory $OutDir `
     -Title 'Windows Triage Collector' `
     -Findings $findings.ToArray() `
-    -Stats @{
-        Processes = @($runningProcesses).Count
-        Services = @($services).Count
-        ScheduledTasks = @($scheduledTasks).Count
-    } `
+    -Stats $reportStats `
     -EvidenceFiles @(
         'raw\processes.json',
         'raw\services.json',

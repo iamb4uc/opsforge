@@ -69,11 +69,15 @@ foreach ($task in $tasks) {
 }
 
 Save-OpsForgeFindings -Findings $findings.ToArray() -OutputDirectory $OutDir
+$scheduledTaskCount = [int](@($tasks).Count)
+$reportStats = @{
+    ScheduledTasks = $scheduledTaskCount
+}
 Save-OpsForgeReport `
     -OutputDirectory $OutDir `
     -Title 'Windows Scheduled Task Auditor' `
     -Findings $findings.ToArray() `
-    -Stats @{ ScheduledTasks = @($tasks).Count } `
+    -Stats $reportStats `
     -EvidenceFiles @('raw\scheduled-tasks.json') `
     -Limitations @(
         'Some task metadata may be missing when task info cannot be read.',

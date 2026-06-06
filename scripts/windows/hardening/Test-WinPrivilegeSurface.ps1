@@ -66,15 +66,19 @@ try {
 Get-Service WinRM,TermService -ErrorAction SilentlyContinue | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\remote-services.json')
 
 Save-OpsForgeFindings -Findings $findings.ToArray() -OutputDirectory $OutDir
+$adminCount = [int](@($admins).Count)
+$serviceCount = [int](@($services).Count)
+$scheduledTaskCount = [int](@($tasks).Count)
+$reportStats = @{
+    LocalAdministrators = $adminCount
+    Services = $serviceCount
+    ScheduledTasks = $scheduledTaskCount
+}
 Save-OpsForgeReport `
     -OutputDirectory $OutDir `
     -Title 'Windows Local Privilege Surface Audit' `
     -Findings $findings.ToArray() `
-    -Stats @{
-        LocalAdministrators = @($admins).Count
-        Services = @($services).Count
-        ScheduledTasks = @($tasks).Count
-    } `
+    -Stats $reportStats `
     -EvidenceFiles @(
         'raw\local-admins.json',
         'raw\rdp-users.json',

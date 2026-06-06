@@ -53,9 +53,9 @@ function Save-OpsForgeFindings {
     $jsonPath = Join-Path $OutputDirectory 'findings.json'
     $normalizedPath = Join-Path $OutputDirectory 'normalized\findings.json'
     if (@($Findings).Count -eq 0) {
-        '[]' | Set-Content -Encoding UTF8 -Path $jsonPath
+        Write-OpsForgeTextFile -Path $jsonPath -Lines @('[]')
     } else {
-        @($Findings) | ConvertTo-Json -Depth 6 | Set-Content -Encoding UTF8 -Path $jsonPath
+        Write-OpsForgeTextFile -Path $jsonPath -Lines @((@($Findings) | ConvertTo-Json -Depth 6))
     }
     Copy-Item -Force -Path $jsonPath -Destination $normalizedPath
 }
@@ -71,7 +71,7 @@ function Save-OpsForgeSummary {
         "Output: $OutputDirectory",
         "Findings: $FindingCount"
     )
-    Set-Content -Encoding UTF8 -LiteralPath (Join-Path $OutputDirectory 'summary.txt') -Value $lines
+    Write-OpsForgeTextFile -Path (Join-Path $OutputDirectory 'summary.txt') -Lines $lines
 }
 
 function Save-OpsForgeReport {
@@ -86,110 +86,110 @@ function Save-OpsForgeReport {
         [string]$CollectionMode = 'read-only'
     )
 
-    $findingList = @($Findings)
-    $statMap = @{}
-    if ($Stats -is [hashtable]) {
-        $statMap = $Stats
-    }
-    $severityOrder = @('critical','high','medium','low','info')
-    $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
-    $lines = @()
+    try {
+        $findingList = @($Findings)
+        $statMap = Get-OpsForgeDictionary -InputObject $Stats
+        $severityOrder = @('critical','high','medium','low','info')
+        $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+        $lines = @()
 
-    $lines += "# $Title"
-    $lines += ''
-    $lines += "- Host: $(Get-OpsForgeHostName)"
-    $lines += "- Generated: $timestamp"
-    $lines += "- Collection mode: $CollectionMode"
-    $lines += "- Output: $OutputDirectory"
-    $lines += ''
-    $lines += '## Finding Count'
-    $lines += ''
-    $lines += "- Total: $($findingList.Count)"
-    foreach ($severity in $severityOrder) {
-        $count = 0
-        foreach ($finding in $findingList) {
-            $findingSeverity = Get-OpsForgeObjectField -InputObject $finding -Name 'severity'
-            if ($findingSeverity -eq $severity) {
-                $count++
-            }
-        }
-        $lines += "- ${severity}: $count"
-    }
-
-    if ($statMap.Count -gt 0) {
+        $lines += "# $Title"
         $lines += ''
-        $lines += '## Collected'
+        $lines += "- Host: $(Get-OpsForgeHostName)"
+        $lines += "- Generated: $timestamp"
+        $lines += "- Collection mode: $CollectionMode"
+        $lines += "- Output: $OutputDirectory"
         $lines += ''
-        foreach ($key in ($statMap.Keys | Sort-Object)) {
-            $lines += "- ${key}: $(ConvertTo-OpsForgeText $statMap[$key])"
-        }
-    }
-
-    $lines += ''
-    $lines += '## Top Findings'
-    $lines += ''
-    $topFindingLines = @()
-    foreach ($severity in $severityOrder) {
-        foreach ($finding in $findingList) {
-            if ($topFindingLines.Count -ge 10) {
-                break
+        $lines += '## Finding Count'
+        $lines += ''
+        $lines += "- Total: $($findingList.Count)"
+        foreach ($severity in $severityOrder) {
+            $count = 0
+            foreach ($finding in $findingList) {
+                $findingSeverity = Get-OpsForgeObjectField -InputObject $finding -Name 'severity'
+                if ($findingSeverity -eq $severity) {
+                    $count++
+                }
             }
-            $findingSeverity = Get-OpsForgeObjectField -InputObject $finding -Name 'severity'
-            if ($findingSeverity -ne $severity) {
-                continue
+            $lines += "- ${severity}: $count"
+        }
+
+        if ($statMap.Count -gt 0) {
+            $lines += ''
+            $lines += '## Collected'
+            $lines += ''
+            foreach ($key in ($statMap.Keys | Sort-Object)) {
+                $lines += "- ${key}: $(ConvertTo-OpsForgeText $statMap[$key])"
             }
-            $title = Get-OpsForgeObjectField -InputObject $finding -Name 'title'
-            $evidence = Get-OpsForgeObjectField -InputObject $finding -Name 'evidence'
-            $topFindingLines += "- [$($severity.ToUpperInvariant())] $title - $evidence"
         }
-    }
-    if ($topFindingLines.Count -eq 0) {
-        $lines += 'No findings recorded.'
-    } else {
-        foreach ($findingLine in $topFindingLines) {
-            $lines += $findingLine
-        }
-    }
 
-    $lines += ''
-    $lines += '## Evidence Files'
-    $lines += ''
-    if (@($EvidenceFiles).Count -eq 0) {
-        $lines += '- raw\'
-        $lines += '- findings.json'
-        $lines += '- summary.txt'
-    } else {
-        foreach ($file in $EvidenceFiles) {
-            $lines += "- $(ConvertTo-OpsForgeText $file)"
+        $lines += ''
+        $lines += '## Top Findings'
+        $lines += ''
+        $topFindingLines = @()
+        foreach ($severity in $severityOrder) {
+            foreach ($finding in $findingList) {
+                if ($topFindingLines.Count -ge 10) {
+                    break
+                }
+                $findingSeverity = Get-OpsForgeObjectField -InputObject $finding -Name 'severity'
+                if ($findingSeverity -ne $severity) {
+                    continue
+                }
+                $title = Get-OpsForgeObjectField -InputObject $finding -Name 'title'
+                $evidence = Get-OpsForgeObjectField -InputObject $finding -Name 'evidence'
+                $topFindingLines += "- [$($severity.ToUpperInvariant())] $title - $evidence"
+            }
         }
-    }
-
-    $lines += ''
-    $lines += '## Collection Limitations'
-    $lines += ''
-    if (@($Limitations).Count -eq 0) {
-        $lines += 'No explicit limitations recorded. Some data can still be partial without admin rights.'
-    } else {
-        foreach ($limitation in $Limitations) {
-            $lines += "- $(ConvertTo-OpsForgeText $limitation)"
+        if ($topFindingLines.Count -eq 0) {
+            $lines += 'No findings recorded.'
+        } else {
+            foreach ($findingLine in $topFindingLines) {
+                $lines += $findingLine
+            }
         }
-    }
 
-    $lines += ''
-    $lines += '## Next Steps'
-    $lines += ''
-    if (@($NextSteps).Count -eq 0) {
-        $lines += '- Review high and critical findings first.'
-        $lines += '- Check raw evidence before making changes.'
-        $lines += '- Treat missing data as partial collection, not proof of absence.'
-    } else {
-        foreach ($step in $NextSteps) {
-            $lines += "- $(ConvertTo-OpsForgeText $step)"
+        $lines += ''
+        $lines += '## Evidence Files'
+        $lines += ''
+        if (@($EvidenceFiles).Count -eq 0) {
+            $lines += '- raw\'
+            $lines += '- findings.json'
+            $lines += '- summary.txt'
+        } else {
+            foreach ($file in $EvidenceFiles) {
+                $lines += "- $(ConvertTo-OpsForgeText $file)"
+            }
         }
-    }
 
-    [string[]]$reportLines = @($lines | ForEach-Object { ConvertTo-OpsForgeText $_ })
-    Set-Content -Encoding UTF8 -LiteralPath (Join-Path $OutputDirectory 'report.md') -Value $reportLines
+        $lines += ''
+        $lines += '## Collection Limitations'
+        $lines += ''
+        if (@($Limitations).Count -eq 0) {
+            $lines += 'No explicit limitations recorded. Some data can still be partial without admin rights.'
+        } else {
+            foreach ($limitation in $Limitations) {
+                $lines += "- $(ConvertTo-OpsForgeText $limitation)"
+            }
+        }
+
+        $lines += ''
+        $lines += '## Next Steps'
+        $lines += ''
+        if (@($NextSteps).Count -eq 0) {
+            $lines += '- Review high and critical findings first.'
+            $lines += '- Check raw evidence before making changes.'
+            $lines += '- Treat missing data as partial collection, not proof of absence.'
+        } else {
+            foreach ($step in $NextSteps) {
+                $lines += "- $(ConvertTo-OpsForgeText $step)"
+            }
+        }
+
+        Write-OpsForgeTextFile -Path (Join-Path $OutputDirectory 'report.md') -Lines $lines
+    } catch {
+        Save-OpsForgeReportError -OutputDirectory $OutputDirectory -Title $Title -Message $_.Exception.Message
+    }
 }
 
 function Test-OpsForgeUserWritablePath {
@@ -215,6 +215,74 @@ function ConvertTo-OpsForgeText {
     }
 
     return [string]$Value
+}
+
+function Write-OpsForgeTextFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [AllowEmptyCollection()][object[]]$Lines = @()
+    )
+
+    $parent = Split-Path -Parent $Path
+    if (-not [string]::IsNullOrWhiteSpace($parent)) {
+        New-Item -ItemType Directory -Force -Path $parent | Out-Null
+    }
+
+    [string[]]$safeLines = @($Lines | ForEach-Object { ConvertTo-OpsForgeText $_ })
+    Set-Content -Encoding UTF8 -LiteralPath $Path -Value $safeLines
+}
+
+function Get-OpsForgeDictionary {
+    param([AllowNull()][object]$InputObject)
+
+    $map = @{}
+    if ($null -eq $InputObject) {
+        return $map
+    }
+
+    if ($InputObject -is [System.Collections.IDictionary]) {
+        foreach ($key in $InputObject.Keys) {
+            $map[(ConvertTo-OpsForgeText $key)] = $InputObject[$key]
+        }
+        return $map
+    }
+
+    foreach ($property in $InputObject.PSObject.Properties) {
+        $map[$property.Name] = $property.Value
+    }
+    return $map
+}
+
+function Save-OpsForgeReportError {
+    param(
+        [Parameter(Mandatory = $true)][string]$OutputDirectory,
+        [Parameter(Mandatory = $true)][string]$Title,
+        [Parameter(Mandatory = $true)][string]$Message
+    )
+
+    Write-OpsForgeTextFile `
+        -Path (Join-Path $OutputDirectory 'raw\report-write-error.txt') `
+        -Lines @("Unable to write full report: $Message")
+
+    Write-OpsForgeTextFile `
+        -Path (Join-Path $OutputDirectory 'report.md') `
+        -Lines @(
+            "# $Title",
+            '',
+            "- Host: $(Get-OpsForgeHostName)",
+            "- Generated: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')",
+            '',
+            '## Report Writer Error',
+            '',
+            "Unable to write full report: $Message",
+            '',
+            '## Evidence Files',
+            '',
+            '- raw\',
+            '- findings.json',
+            '- summary.txt',
+            '- raw\report-write-error.txt'
+        )
 }
 
 function Get-OpsForgeObjectField {
