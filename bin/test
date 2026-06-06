@@ -285,6 +285,23 @@ test_installer() {
     --prefix "$prefix" \
     --app-dir "$app_dir" \
     --bin-dir "$bin_dir" \
+    --dry-run >/dev/null
+
+  [ ! -e "$app_dir" ] || fail "installer dry-run created app dir"
+  [ ! -e "$bin_dir/opsforge" ] || fail "installer dry-run created shim"
+
+  "$ROOT/install.sh" \
+    --source "$ROOT" \
+    --prefix "$prefix" \
+    --app-dir "$app_dir" \
+    --bin-dir "$bin_dir" \
+    --check >/dev/null
+
+  "$ROOT/install.sh" \
+    --source "$ROOT" \
+    --prefix "$prefix" \
+    --app-dir "$app_dir" \
+    --bin-dir "$bin_dir" \
     --force >/dev/null
 
   assert_file "$app_dir/bin/opsforge"
