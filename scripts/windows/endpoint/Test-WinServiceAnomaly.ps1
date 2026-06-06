@@ -36,11 +36,15 @@ foreach ($svc in $services) {
 }
 
 Save-OpsForgeFindings -Findings $findings.ToArray() -OutputDirectory $OutDir
+$serviceCount = [int](@($services).Count)
+$reportStats = @{
+    Services = $serviceCount
+}
 Save-OpsForgeReport `
     -OutputDirectory $OutDir `
     -Title 'Windows Service Anomaly Auditor' `
     -Findings $findings.ToArray() `
-    -Stats @{ Services = @($services).Count } `
+    -Stats $reportStats `
     -EvidenceFiles @('raw\services.json') `
     -Limitations @(
         'Service creation time and file ACL review are not always available from Win32_Service alone.'

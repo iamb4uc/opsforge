@@ -58,14 +58,17 @@ foreach ($record in $records) {
 }
 
 Save-OpsForgeFindings -Findings $findings.ToArray() -OutputDirectory $OutDir
+$listeningSocketCount = [int](@($records).Count)
+$tcpConnectionCount = [int](@($connections).Count)
+$reportStats = @{
+    ListeningSockets = $listeningSocketCount
+    TcpConnections = $tcpConnectionCount
+}
 Save-OpsForgeReport `
     -OutputDirectory $OutDir `
     -Title 'Windows Network Exposure Mapper' `
     -Findings $findings.ToArray() `
-    -Stats @{
-        ListeningSockets = @($records).Count
-        TcpConnections = @($connections).Count
-    } `
+    -Stats $reportStats `
     -EvidenceFiles @(
         'raw\listening-tcp.json',
         'raw\tcp-connections.json',

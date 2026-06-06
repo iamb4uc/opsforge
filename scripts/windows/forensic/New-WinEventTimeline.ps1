@@ -55,14 +55,17 @@ $ordered | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 -Path (Join-Path
     $ordered | Select-Object -First 500 | ForEach-Object { "| $($_.timestamp) | $($_.source) | $($_.event_type) | $($_.severity) | $($_.summary -replace '\|','/') |" }
 ) | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'timeline.md')
 Save-OpsForgeFindings -Findings $findings.ToArray() -OutputDirectory $OutDir
+$timelineEventCount = [int](@($ordered).Count)
+$logCount = [int](@($logs).Count)
+$reportStats = @{
+    TimelineEvents = $timelineEventCount
+    LogsRequested = $logCount
+}
 Save-OpsForgeReport `
     -OutputDirectory $OutDir `
     -Title 'Windows Event Timeline Builder' `
     -Findings $findings.ToArray() `
-    -Stats @{
-        TimelineEvents = @($ordered).Count
-        LogsRequested = @($logs).Count
-    } `
+    -Stats $reportStats `
     -EvidenceFiles @(
         'timeline.csv',
         'timeline.md',

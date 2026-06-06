@@ -195,15 +195,18 @@ $reportLimitations = @(
     'Registry, WMI, and scheduled task visibility can be partial without admin rights.',
     'PowerShell profile paths vary between Windows PowerShell and PowerShell 7.'
 ) + $limitations.ToArray()
+$autorunCount = [int]$autoruns.Count
+$profileCount = [int](@($profiles).Count)
+$reportStats = @{
+    AutorunRecords = $autorunCount
+    PowerShellProfiles = $profileCount
+}
 
 Save-OpsForgeReport `
     -OutputDirectory $OutDir `
     -Title 'Windows Persistence Hunter' `
     -Findings $findings.ToArray() `
-    -Stats @{
-        AutorunRecords = @($autoruns).Count
-        PowerShellProfiles = @($profiles).Count
-    } `
+    -Stats $reportStats `
     -EvidenceFiles @(
         'raw\autoruns.json',
         'raw\wmi-event-consumers.json',

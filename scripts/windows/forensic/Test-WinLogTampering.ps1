@@ -65,14 +65,16 @@ try {
 } catch { }
 
 Save-OpsForgeFindings -Findings $findings.ToArray() -OutputDirectory $OutDir
+$eventCount = [int]$events.Count
+$reportStats = @{
+    LookbackDays = [int]$LookbackDays
+    EventsCollected = $eventCount
+}
 Save-OpsForgeReport `
     -OutputDirectory $OutDir `
     -Title 'Windows Log Tampering Detector' `
     -Findings $findings.ToArray() `
-    -Stats @{
-        LookbackDays = $LookbackDays
-        EventsCollected = @($events).Count
-    } `
+    -Stats $reportStats `
     -EvidenceFiles @(
         'raw\tampering-events.json',
         'raw\audit-policy.txt',
