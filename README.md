@@ -183,6 +183,20 @@ Windows:
 .\bin\test.ps1 runtime
 ```
 
+## Releases
+
+Releases are tag-driven.
+
+Create and push a signed tag when `main` is ready:
+
+```bash
+git tag -s v0.5.1 -m "v0.5.1"
+git push origin v0.5.1
+```
+
+GitHub Actions runs the release checks and creates the GitHub release with
+`gh release create`.
+
 ## Sensitive Output
 
 opsforge collects host and system data.
