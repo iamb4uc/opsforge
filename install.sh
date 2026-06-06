@@ -8,7 +8,10 @@ SOURCE_DIR=""
 PREFIX="/usr/local"
 APP_DIR=""
 BIN_DIR=""
+PREFIX_SET=0
 FORCE=0
+DRY_RUN=0
+CHECK_ONLY=0
 CLEANUP_DIR=""
 
 usage() {
@@ -23,6 +26,8 @@ Options:
   --app-dir DIR     Directory for opsforge files. Default: /opt/opsforge
   --bin-dir DIR     Directory for the opsforge command. Default: PREFIX/bin
   --force           Replace an existing install directory.
+  --dry-run         Print what would happen without writing files.
+  --check           Check dependencies and paths without installing.
   -h, --help        Show this help.
 
 Examples:
@@ -30,6 +35,7 @@ Examples:
   bash /tmp/opsforge-install
 
   bash install.sh --source . --prefix "$HOME/.local"
+  bash install.sh --source . --dry-run
 USAGE
 }
 
@@ -71,6 +77,7 @@ parse_args() {
         ;;
       --prefix)
         PREFIX="${2:?missing prefix}"
+        PREFIX_SET=1
         shift 2
         ;;
       --app-dir)
@@ -85,6 +92,15 @@ parse_args() {
         FORCE=1
         shift
         ;;
+      --dry-run)
+        DRY_RUN=1
+        shift
+        ;;
+      --check)
+        CHECK_ONLY=1
+        DRY_RUN=1
+        shift
+        ;;
       -h|--help)
         usage
         exit 0
@@ -97,6 +113,10 @@ parse_args() {
 }
 
 set_default_paths() {
+  if ! is_root && [ "$PREFIX" = "/usr/local" ] && [ "$PREFIX_SET" != "1" ]; then
+    PREFIX="$HOME/.local"
+  fi
+
   if [ -z "$APP_DIR" ]; then
     if is_root; then
       APP_DIR="/opt/opsforge"
@@ -108,12 +128,6 @@ set_default_paths() {
   if [ -z "$BIN_DIR" ]; then
     BIN_DIR="${PREFIX%/}/bin"
   fi
-
-  if ! is_root && [ "$PREFIX" = "/usr/local" ]; then
-    PREFIX="$HOME/.local"
-    BIN_DIR="$HOME/.local/bin"
-    APP_DIR="$HOME/.local/share/opsforge"
-  fi
 }
 
 check_deps() {
@@ -124,6 +138,58 @@ check_deps() {
 
   if [ -z "$SOURCE_DIR" ] && ! have curl && ! have wget; then
     fail "curl or wget is required to download opsforge"
+  fi
+}
+
+assert_safe_install_paths() {
+  case "$APP_DIR" in
+    ""|"/"|"/bin"|"/sbin"|"/usr"|"/usr/bin"|"/usr/sbin"|"/usr/local"|"/usr/local/bin"|"/opt"|"/home"|"$HOME")
+      fail "refusing unsafe app dir: $APP_DIR"
+      ;;
+  esac
+
+  case "$BIN_DIR" in
+    ""|"/")
+      fail "refusing unsafe bin dir: $BIN_DIR"
+      ;;
+  esac
+
+  case "$(basename "$APP_DIR")" in
+    *opsforge*) ;;
+    *) fail "app dir must include 'opsforge': $APP_DIR" ;;
+  esac
+}
+
+check_paths() {
+  local app_parent bin_parent
+  app_parent="$(dirname "$APP_DIR")"
+  bin_parent="$(dirname "$BIN_DIR")"
+
+  [ -n "$app_parent" ] || fail "could not resolve app parent"
+  [ -n "$bin_parent" ] || fail "could not resolve bin parent"
+
+  if [ -e "$APP_DIR" ] && [ "$FORCE" != "1" ]; then
+    fail "$APP_DIR already exists; use --force to replace it"
+  fi
+
+  if [ -n "$SOURCE_DIR" ] && [ ! -f "$SOURCE_DIR/bin/opsforge" ]; then
+    fail "source does not look like opsforge: $SOURCE_DIR"
+  fi
+}
+
+print_plan() {
+  say "ref: $REF"
+  if [ -n "$SOURCE_DIR" ]; then
+    say "source: $SOURCE_DIR"
+  else
+    say "source: ${REPO_URL%/}"
+  fi
+  say "app dir: $APP_DIR"
+  say "bin dir: $BIN_DIR"
+  say "command: $BIN_DIR/opsforge"
+
+  if [ "$FORCE" = "1" ] && [ -e "$APP_DIR" ]; then
+    say "would replace existing app dir: $APP_DIR"
   fi
 }
 
@@ -192,6 +258,19 @@ write_shim() {
 
 install_opsforge() {
   local tmp
+
+  check_paths
+  print_plan
+
+  if [ "$DRY_RUN" = "1" ]; then
+    if [ "$CHECK_ONLY" = "1" ]; then
+      say "check passed"
+    else
+      say "dry-run only; no files written"
+    fi
+    return 0
+  fi
+
   tmp="$(mktemp -d "${TMPDIR:-/tmp}/opsforge-install.XXXXXX")"
   CLEANUP_DIR="$tmp"
   trap 'rm -rf "$CLEANUP_DIR"' EXIT
@@ -200,11 +279,8 @@ install_opsforge() {
     download_source "$tmp"
   fi
 
-  if [ -e "$APP_DIR" ] && [ "$FORCE" != "1" ]; then
-    fail "$APP_DIR already exists; use --force to replace it"
-  fi
-
   if [ -e "$APP_DIR" ]; then
+    say "removing existing app dir because --force was passed: $APP_DIR"
     rm -rf "$APP_DIR"
   fi
 
@@ -227,4 +303,5 @@ install_opsforge() {
 parse_args "$@"
 set_default_paths
 check_deps
+assert_safe_install_paths
 install_opsforge

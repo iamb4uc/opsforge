@@ -67,6 +67,13 @@ By default, root installs put the command in `/usr/local/bin/opsforge` and the
 tool files in `/opt/opsforge`. Non-root installs use `~/.local/bin/opsforge`
 and `~/.local/share/opsforge`.
 
+Check what the installer would do without writing files:
+
+```bash
+bash /tmp/opsforge-install --dry-run
+bash /tmp/opsforge-install --check
+```
+
 Check the host first:
 
 ```bash
