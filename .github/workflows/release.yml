@@ -1,0 +1,122 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  linux-checks:
+    name: linux checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: syntax
+        shell: bash
+        run: ./bin/test syntax
+
+      - name: help
+        shell: bash
+        run: ./bin/test help
+
+      - name: wrapper targets
+        shell: bash
+        run: ./bin/test wrapper-targets
+
+      - name: forbidden files
+        shell: bash
+        run: ./bin/test forbidden-files
+
+      - name: readability
+        shell: bash
+        run: ./bin/test readability
+
+      - name: output contract
+        shell: bash
+        run: ./bin/test output-contract
+
+      - name: installer
+        shell: bash
+        run: ./bin/test installer
+
+  windows-checks:
+    name: windows checks
+    runs-on: windows-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: parser
+        shell: pwsh
+        run: .\bin\test.ps1 parser
+
+      - name: wrapper targets
+        shell: pwsh
+        run: .\bin\test.ps1 wrapper-targets
+
+      - name: static checks
+        shell: pwsh
+        run: .\bin\test.ps1 static
+
+  release:
+    name: create release
+    runs-on: ubuntu-latest
+    needs:
+      - linux-checks
+      - windows-checks
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: build release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="${GITHUB_REF_NAME}"
+          notes_file="release-notes.md"
+
+          awk -v tag="$tag" '
+            BEGIN { found = 0 }
+            $0 ~ "^## " tag "([[:space:]-]|$)" {
+              found = 1
+              next
+            }
+            found && $0 ~ "^## " {
+              exit
+            }
+            found {
+              print
+            }
+          ' CHANGELOG.md > "$notes_file"
+
+          if [ ! -s "$notes_file" ]; then
+            {
+              printf '%s\n\n' "$tag"
+              printf '%s\n' "See CHANGELOG.md for the closest notes."
+            } > "$notes_file"
+          fi
+
+      - name: create github release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="${GITHUB_REF_NAME}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "release already exists: $tag"
+            exit 0
+          fi
+
+          gh release create "$tag" \
+            --title "$tag" \
+            --notes-file release-notes.md
