@@ -85,6 +85,13 @@ opsforge_pid1_exe() {
 
 opsforge_detect_init_system() {
   local pid1_comm pid1_exe
+  case "${OPSFORGE_EXPECT_INIT:-${OPSFORGE_INIT_SYSTEM:-}}" in
+    systemd|runit|openrc|sysv/service)
+      printf '%s\n' "${OPSFORGE_EXPECT_INIT:-${OPSFORGE_INIT_SYSTEM:-}}"
+      return 0
+      ;;
+  esac
+
   pid1_comm="$(opsforge_pid1_comm)"
   pid1_exe="$(opsforge_pid1_exe)"
 
