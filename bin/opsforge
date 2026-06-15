@@ -3,6 +3,9 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+. "$ROOT/lib/common.sh"
+. "$ROOT/lib/logging.sh"
+. "$ROOT/lib/output.sh"
 
 usage() {
   cat <<'USAGE'
@@ -84,17 +87,7 @@ detect_shell() {
 }
 
 detect_init_system() {
-  if [ -d /run/systemd/system ] || have_command systemctl; then
-    printf 'systemd\n'
-  elif [ -d /run/runit ] || [ -d /etc/runit ] || have_command sv; then
-    printf 'runit\n'
-  elif [ -d /run/openrc ] || have_command rc-status; then
-    printf 'openrc\n'
-  elif have_command service; then
-    printf 'sysv/service\n'
-  else
-    printf 'unknown\n'
-  fi
+  opsforge_detect_init_system
 }
 
 run_doctor() {
@@ -166,6 +159,18 @@ run_doctor() {
   fi
   if ! have_command lsof; then
     limitations+=("deleted-but-open file evidence is limited without lsof")
+  fi
+  if [ "$init_system" = "systemd" ] && ! have_command systemctl; then
+    limitations+=("systemd host detected but systemctl is missing")
+  fi
+  if [ "$init_system" = "runit" ] && ! have_command sv; then
+    limitations+=("runit host detected but sv is missing")
+  fi
+  if [ "$init_system" = "openrc" ] && ! have_command rc-status; then
+    limitations+=("OpenRC host detected but rc-status is missing")
+  fi
+  if [ "$init_system" = "sysv/service" ] && ! have_command service; then
+    limitations+=("SysV/service host detected but service is missing")
   fi
 
   printf '\nknown limitations:\n'

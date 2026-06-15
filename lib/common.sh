@@ -59,6 +59,144 @@ opsforge_init_paths() {
     /etc/runlevels
 }
 
+opsforge_init_has_systemd() {
+  [ -d /run/systemd/system ] || [ -d /etc/systemd/system ] || [ -d /usr/lib/systemd/system ] || [ -d /lib/systemd/system ]
+}
+
+opsforge_init_has_runit() {
+  [ -d /run/runit ] || [ -d /etc/runit ] || [ -d /etc/sv ] || [ -d /var/service ] || [ -d /service ] || [ -d /etc/service ]
+}
+
+opsforge_init_has_openrc() {
+  [ -d /run/openrc ] || [ -d /etc/init.d ] || [ -d /etc/conf.d ] || [ -d /etc/runlevels ]
+}
+
+opsforge_pid1_comm() {
+  if [ -r /proc/1/comm ]; then
+    tr -d '\n' < /proc/1/comm 2>/dev/null || true
+  fi
+}
+
+opsforge_pid1_exe() {
+  if [ -L /proc/1/exe ]; then
+    readlink /proc/1/exe 2>/dev/null || true
+  fi
+}
+
+opsforge_detect_init_system() {
+  local pid1_comm pid1_exe
+  pid1_comm="$(opsforge_pid1_comm)"
+  pid1_exe="$(opsforge_pid1_exe)"
+
+  if [ "$pid1_comm" = "systemd" ] || [ "$pid1_exe" = "/usr/lib/systemd/systemd" ] || [ "$pid1_exe" = "/lib/systemd/systemd" ]; then
+    printf 'systemd\n'
+  elif [ "$pid1_comm" = "runit-init" ] || [ "$pid1_exe" = "/sbin/runit-init" ] || [ -d /run/runit ] || [ -d /etc/runit ]; then
+    printf 'runit\n'
+  elif [ "$pid1_comm" = "openrc-init" ] || [ "$pid1_exe" = "/sbin/openrc-init" ] || [ -d /run/openrc ]; then
+    printf 'openrc\n'
+  elif command_exists service; then
+    printf 'sysv/service\n'
+  else
+    printf 'unknown\n'
+  fi
+}
+
+opsforge_collect_init_services() {
+  local mode="$1"
+  case "$mode" in
+    systemd)
+      if command_exists systemctl; then
+        printf '%s\n' "--- systemd units ---"
+        systemctl list-units --type=service --all --no-pager 2>&1 || true
+      else
+        printf '%s\n' "systemctl unavailable"
+      fi
+      ;;
+    runit)
+      if command_exists sv; then
+        printf '%s\n' "--- runit services ---"
+        for d in /var/service /service /etc/service; do
+          [ -d "$d" ] || continue
+          printf '%s\n' "# active service dir: $d"
+          find "$d" -mindepth 1 -maxdepth 1 -print 2>/dev/null |
+            while IFS= read -r svc; do sv status "$svc" 2>&1 || true; done
+        done
+        printf '%s\n' "--- runit service definitions ---"
+        for d in /etc/sv /etc/runit; do
+          [ -d "$d" ] || continue
+          printf '%s\n' "# definition dir: $d"
+          find "$d" -mindepth 1 -maxdepth 2 \( -type f -o -type l \) 2>/dev/null |
+            while IFS= read -r item; do ls -ld "$item" 2>/dev/null || true; done
+        done
+      else
+        printf '%s\n' "sv unavailable"
+      fi
+      ;;
+    openrc)
+      if command_exists rc-status; then
+        printf '%s\n' "--- openrc services ---"
+        rc-status -a 2>&1 || true
+        printf '%s\n' "--- openrc runlevels ---"
+        find /etc/runlevels /etc/init.d /etc/conf.d -maxdepth 2 -print 2>/dev/null || true
+      elif command_exists rc-service; then
+        printf '%s\n' "--- openrc services ---"
+        rc-service --help 2>&1 || true
+        printf '%s\n' "--- openrc runlevels ---"
+        find /etc/runlevels /etc/init.d /etc/conf.d -maxdepth 2 -print 2>/dev/null || true
+      else
+        printf '%s\n' "rc-status/rc-service unavailable"
+      fi
+      ;;
+    sysv/service)
+      if command_exists service; then
+        printf '%s\n' "--- sysv service status ---"
+        service --status-all 2>&1 || true
+      else
+        printf '%s\n' "service unavailable"
+      fi
+      ;;
+  esac
+}
+
+opsforge_collect_init_failed_services() {
+  local mode="$1"
+  case "$mode" in
+    systemd)
+      if command_exists systemctl; then
+        printf '%s\n' "--- systemd failed units ---"
+        systemctl --failed --no-pager 2>&1 || true
+      fi
+      ;;
+    runit)
+      if command_exists sv; then
+        printf '%s\n' "--- runit down/problem services ---"
+        for d in /var/service /service /etc/service; do
+          [ -d "$d" ] || continue
+          find "$d" -mindepth 1 -maxdepth 1 -print 2>/dev/null |
+            while IFS= read -r svc; do sv status "$svc" 2>&1 || true; done
+        done | grep -Ei "^(down|fail|unable|warning):|supervise not running" || true
+      fi
+      ;;
+    openrc)
+      if command_exists rc-status; then
+        printf '%s\n' "--- openrc crashed/inactive services ---"
+        rc-status -a 2>&1 | grep -Ei "crashed|failed|inactive" || true
+      elif command_exists rc-service; then
+        printf '%s\n' "--- openrc service status ---"
+        for svc in $(find /etc/init.d -maxdepth 1 -type f -printf '%f\n' 2>/dev/null | sort); do
+          rc-service "$svc" status 2>&1 || true
+        done
+      fi
+      ;;
+    sysv/service)
+      if command_exists service; then
+        printf '%s\n' "--- sysv service status ---"
+        service --status-all 2>&1 || true
+      fi
+      ;;
+  esac
+}
+
 json_escape() {
   local s="${1-}"
   s="${s//\\/\\\\}"
