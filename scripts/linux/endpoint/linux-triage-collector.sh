@@ -130,67 +130,9 @@ collect network sh -c 'if command -v ss >/dev/null 2>&1; then ss -tunap; elif co
 collect listening-sockets sh -c 'if command -v ss >/dev/null 2>&1; then ss -lntup; elif command -v netstat >/dev/null 2>&1; then netstat -lntup; else printf "ss/netstat unavailable\n"; fi'
 collect routing-table sh -c 'if command -v ip >/dev/null 2>&1; then ip route show table all; elif command -v route >/dev/null 2>&1; then route -n; else printf "ip/route unavailable\n"; fi'
 collect dns-config sh -c 'cat /etc/resolv.conf 2>/dev/null; printf "\n--- hosts ---\n"; cat /etc/hosts 2>/dev/null'
-collect services sh -c '
-found=0
-if command -v systemctl >/dev/null 2>&1; then
-  found=1
-  printf "%s\n" "--- systemd units ---"
-  systemctl list-units --type=service --all --no-pager 2>&1 || true
-fi
-if command -v sv >/dev/null 2>&1; then
-  found=1
-  printf "%s\n" "--- runit services ---"
-  for d in /var/service /service /etc/service; do
-    [ -d "$d" ] || continue
-    printf "%s\n" "# active service dir: $d"
-    find "$d" -mindepth 1 -maxdepth 1 -print 2>/dev/null |
-      while IFS= read -r svc; do sv status "$svc" 2>&1 || true; done
-  done
-  printf "%s\n" "--- runit service definitions ---"
-  for d in /etc/sv /etc/runit; do
-    [ -d "$d" ] || continue
-    printf "%s\n" "# definition dir: $d"
-    find "$d" -mindepth 1 -maxdepth 2 \( -type f -o -type l \) 2>/dev/null |
-      while IFS= read -r item; do ls -ld "$item" 2>/dev/null || true; done
-  done
-fi
-if command -v rc-status >/dev/null 2>&1; then
-  found=1
-  printf "%s\n" "--- openrc services ---"
-  rc-status -a 2>&1 || true
-  printf "%s\n" "--- openrc runlevels ---"
-  find /etc/runlevels /etc/init.d /etc/conf.d -maxdepth 2 -print 2>/dev/null || true
-fi
-if [ "$found" -eq 0 ] && command -v service >/dev/null 2>&1; then
-  found=1
-  printf "%s\n" "--- sysv service status ---"
-  service --status-all 2>&1 || true
-fi
-[ "$found" -eq 1 ] || printf "%s\n" "No supported service manager command found."
-'
-collect failed-services sh -c '
-found=0
-if command -v systemctl >/dev/null 2>&1; then
-  found=1
-  printf "%s\n" "--- systemd failed units ---"
-  systemctl --failed --no-pager 2>&1 || true
-fi
-if command -v sv >/dev/null 2>&1; then
-  found=1
-  printf "%s\n" "--- runit down/problem services ---"
-  for d in /var/service /service /etc/service; do
-    [ -d "$d" ] || continue
-    find "$d" -mindepth 1 -maxdepth 1 -print 2>/dev/null |
-      while IFS= read -r svc; do sv status "$svc" 2>&1 || true; done
-  done | grep -Ei "^(down|fail|unable|warning):|supervise not running" || true
-fi
-if command -v rc-status >/dev/null 2>&1; then
-  found=1
-  printf "%s\n" "--- openrc crashed/inactive services ---"
-  rc-status -a 2>&1 | grep -Ei "crashed|failed|inactive" || true
-fi
-[ "$found" -eq 1 ] || printf "%s\n" "No supported service manager command found."
-'
+init_system="$(opsforge_detect_init_system)"
+collect services bash -c ". \"$REPO_ROOT/lib/common.sh\"; opsforge_collect_init_services \"\$1\"" bash "$init_system"
+collect failed-services bash -c ". \"$REPO_ROOT/lib/common.sh\"; opsforge_collect_init_failed_services \"\$1\"" bash "$init_system"
 collect cron-jobs sh -c 'for p in /etc/crontab /etc/cron.d /etc/cron.daily /etc/cron.hourly /etc/cron.weekly /etc/cron.monthly /var/spool/cron; do [ -e "$p" ] && ls -la "$p" && { [ -f "$p" ] && cat "$p" || find "$p" -maxdepth 2 -type f -print -exec sed -n "1,80p" {} \; ; }; done; crontab -l 2>/dev/null || true'
 collect sudoers sh -c 'find /etc/sudoers /etc/sudoers.d -maxdepth 2 -type f -print -exec sed -n "1,120p" {} \; 2>/dev/null || true'
 collect authorized-keys sh -c 'find /root /home -path "*/.ssh/authorized_keys" -type f -print -exec ls -l {} \; -exec sed -n "1,80p" {} \; 2>/dev/null || true'
