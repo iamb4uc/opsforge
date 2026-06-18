@@ -59,6 +59,10 @@ The runtime check currently executes:
 - `Test-WinScheduledTasks.ps1`
 - `Get-WinNetworkExposure.ps1`
 - `New-WinEventTimeline.ps1`
+- `windows quick`
+- `windows ir`
+- `windows full`
+- `windows all`
 
 Each runtime output is checked for the standard `raw/`, `normalized/`,
 `report.md`, `findings.json`, and `summary.txt` shape.

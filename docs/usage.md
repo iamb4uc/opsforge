@@ -33,6 +33,7 @@ produce useful partial output as an unprivileged user.
 .\bin\opsforge.ps1 windows quick -OutputPath .\output -Json -Markdown
 .\bin\opsforge.ps1 windows ir -OutputPath .\output -Json -Markdown
 .\bin\opsforge.ps1 windows full -OutputPath .\output -Json -Markdown
+.\bin\opsforge.ps1 windows all -OutputPath .\output -Json -Markdown
 .\bin\opsforge.ps1 windows triage -OutputPath .\output -Json -Markdown
 .\bin\opsforge.ps1 windows persistence -OutputPath .\output
 .\bin\opsforge.ps1 windows services -OutputPath .\output
