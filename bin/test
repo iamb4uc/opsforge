@@ -240,10 +240,24 @@ test_readability() {
 
 test_wrapper_targets() {
   say "checking wrapper target paths"
-  local target
+  local target pattern
   while IFS= read -r target; do
     [ -f "$ROOT/$target" ] || fail "Bash wrapper references missing script: $target"
   done < <(sed -n 's/.*exec "$ROOT\/\([^"]*\)".*/\1/p' "$ROOT/bin/opsforge" | sort)
+
+  while IFS= read -r pattern; do
+    [ -n "$pattern" ] || continue
+    grep -F "$pattern" "$ROOT/bin/opsforge" >/dev/null 2>&1 ||
+      fail "Bash wrapper is missing dispatch flow: $pattern"
+  done <<'EOF'
+linux:doctor) run_doctor "$@" ;;
+linux:quick|linux:ir|linux:noc|linux:full|linux:all) run_linux_profile "$command_name" "$@" ;;
+linux:triage) exec "$ROOT/scripts/linux/endpoint/linux-triage-collector.sh" "$@" ;;
+linux:persistence) exec "$ROOT/scripts/linux/persistence/linux-persistence-hunter.sh" "$@" ;;
+linux:deleted-binaries|linux:deleted-binary) exec "$ROOT/scripts/linux/forensic/deleted-binary-detector.sh" "$@" ;;
+linux:disk-rca) exec "$ROOT/scripts/linux/noc/disk-pressure-rca.sh" "$@" ;;
+linux:tls) exec "$ROOT/scripts/linux/network/tls-inventory-scanner.sh" "$@" ;;
+EOF
 
   while IFS= read -r target; do
     target="${target//\\//}"
@@ -252,6 +266,23 @@ test_wrapper_targets() {
     sed -n 's/.*Join-Path \$Root '"'"'\(scripts[^'"'"']*\.ps1\)'"'"'.*/\1/p' "$ROOT/bin/opsforge.ps1" |
       sort
   )
+
+  while IFS= read -r pattern; do
+    [ -n "$pattern" ] || continue
+    grep -F "$pattern" "$ROOT/bin/opsforge.ps1" >/dev/null 2>&1 ||
+      fail "PowerShell wrapper is missing dispatch flow: $pattern"
+  done <<'EOF'
+'windows:doctor' { Invoke-OpsForgeDoctor; break }
+'windows:quick' { Invoke-WindowsProfile -Profile 'quick'; break }
+'windows:ir' { Invoke-WindowsProfile -Profile 'ir'; break }
+'windows:full' { Invoke-WindowsProfile -Profile 'full'; break }
+'windows:all' { Invoke-WindowsAll; break }
+'windows:triage' { Invoke-OpsForgeScript (Join-Path $Root 'scripts\windows\endpoint\Invoke-WinTriage.ps1'); break }
+'windows:persistence' { Invoke-OpsForgeScript (Join-Path $Root 'scripts\windows\persistence\Find-WinPersistence.ps1'); break }
+'windows:tasks' { Invoke-OpsForgeScript (Join-Path $Root 'scripts\windows\persistence\Test-WinScheduledTasks.ps1'); break }
+'windows:network' { Invoke-OpsForgeScript (Join-Path $Root 'scripts\windows\network\Get-WinNetworkExposure.ps1'); break }
+'windows:timeline' { Invoke-OpsForgeScript (Join-Path $Root 'scripts\windows\forensic\New-WinEventTimeline.ps1'); break }
+EOF
 }
 
 test_script_catalog() {
