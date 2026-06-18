@@ -235,6 +235,7 @@ function Test-Runtime {
     Invoke-SafeProfileCheck -Profile 'quick' -OutputRoot $outputRoot
     Invoke-SafeProfileCheck -Profile 'ir' -OutputRoot $outputRoot
     Invoke-SafeProfileCheck -Profile 'full' -OutputRoot $outputRoot
+    Invoke-SafeProfileCheck -Profile 'all' -OutputRoot $outputRoot
     Write-TestLine "windows runtime evidence: $outputRoot"
 }
 

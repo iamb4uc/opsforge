@@ -64,6 +64,10 @@ Run individual tools:
 .\bin\opsforge.ps1 windows tasks -OutputPath .\output -Json -Markdown
 .\bin\opsforge.ps1 windows network -OutputPath .\output -Json -Markdown
 .\bin\opsforge.ps1 windows timeline -OutputPath .\output -Json -Markdown
+.\bin\opsforge.ps1 windows quick -OutputPath .\output -Json -Markdown
+.\bin\opsforge.ps1 windows ir -OutputPath .\output -Json -Markdown
+.\bin\opsforge.ps1 windows full -OutputPath .\output -Json -Markdown
+.\bin\opsforge.ps1 windows all -OutputPath .\output -Json -Markdown
 ```
 
 ## Evidence to capture

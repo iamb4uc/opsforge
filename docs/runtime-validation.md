@@ -48,6 +48,7 @@ Runs:
 - scheduled task auditor
 - network exposure mapper
 - event timeline builder
+- Windows quick, ir, full, and all profile runs
 
 Each run must produce:
 
