@@ -15,6 +15,7 @@ $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot '..\..\..')
 
 $OutDir = New-OpsForgeOutputDirectory -OutputPath $OutputPath -ScriptName 'Test-WinScheduledTasks'
 $findings = New-Object System.Collections.Generic.List[object]
+$limitations = New-Object System.Collections.Generic.List[string]
 $rawPath = Join-Path $OutDir 'raw\scheduled-tasks.json'
 
 function Get-TaskTriggerName {
@@ -29,21 +30,28 @@ function Get-TaskTriggerName {
     return $Trigger.GetType().Name
 }
 
-$tasks = Get-ScheduledTask | ForEach-Object {
-    $info = $null
-    try { $info = Get-ScheduledTaskInfo -TaskName $_.TaskName -TaskPath $_.TaskPath -ErrorAction Stop } catch { }
-    [pscustomobject]@{
-        TaskName = $_.TaskName
-        TaskPath = $_.TaskPath
-        Author = $_.Author
-        UserId = $_.Principal.UserId
-        RunLevel = $_.Principal.RunLevel
-        Hidden = $_.Settings.Hidden
-        Actions = ($_.Actions | ForEach-Object { Get-OpsForgeTaskActionText $_ }) -join '; '
-        Triggers = ($_.Triggers | ForEach-Object { Get-TaskTriggerName $_ }) -join '; '
-        LastRunTime = if ($info) { $info.LastRunTime } else { $null }
-        NextRunTime = if ($info) { $info.NextRunTime } else { $null }
+$tasks = @()
+try {
+    foreach ($scheduledTask in @(Get-ScheduledTask -ErrorAction Stop)) {
+        $info = $null
+        try { $info = Get-ScheduledTaskInfo -TaskName $scheduledTask.TaskName -TaskPath $scheduledTask.TaskPath -ErrorAction Stop } catch { }
+        $tasks += [pscustomobject]@{
+            TaskName = $scheduledTask.TaskName
+            TaskPath = $scheduledTask.TaskPath
+            Author = $scheduledTask.Author
+            UserId = $scheduledTask.Principal.UserId
+            RunLevel = $scheduledTask.Principal.RunLevel
+            Hidden = $scheduledTask.Settings.Hidden
+            Actions = ($scheduledTask.Actions | ForEach-Object { Get-OpsForgeTaskActionText $_ }) -join '; '
+            Triggers = ($scheduledTask.Triggers | ForEach-Object { Get-TaskTriggerName $_ }) -join '; '
+            LastRunTime = if ($info) { $info.LastRunTime } else { $null }
+            NextRunTime = if ($info) { $info.NextRunTime } else { $null }
+        }
     }
+} catch {
+    $message = "Unable to read scheduled tasks: $($_.Exception.Message)"
+    $limitations.Add($message)
+    $message | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\scheduled-tasks.error.txt')
 }
 
 $tasks | ConvertTo-Json -Depth 6 | Set-Content -Encoding UTF8 -Path $rawPath
@@ -73,16 +81,21 @@ $scheduledTaskCount = [int](@($tasks).Count)
 $reportStats = @{
     ScheduledTasks = $scheduledTaskCount
 }
+$reportLimitations = @(
+    'Some task metadata may be missing when task info cannot be read.',
+    'Task creation time is not exposed cleanly by every scheduled task API.'
+) + $limitations.ToArray()
+$evidenceFiles = @('raw\scheduled-tasks.json')
+if ($limitations.Count -gt 0) {
+    $evidenceFiles += 'raw\scheduled-tasks.error.txt'
+}
 Save-OpsForgeReport `
     -OutputDirectory $OutDir `
     -Title 'Windows Scheduled Task Auditor' `
     -Findings $findings.ToArray() `
     -Stats $reportStats `
-    -EvidenceFiles @('raw\scheduled-tasks.json') `
-    -Limitations @(
-        'Some task metadata may be missing when task info cannot be read.',
-        'Task creation time is not exposed cleanly by every scheduled task API.'
-    ) `
+    -EvidenceFiles $evidenceFiles `
+    -Limitations $reportLimitations `
     -NextSteps @(
         'Review encoded PowerShell, user-writable paths, hidden tasks, and logon triggers.',
         'Export suspicious task XML before disabling anything.'
