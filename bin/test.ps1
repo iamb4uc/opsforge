@@ -140,6 +140,18 @@ function Test-Static {
         if ($content -notmatch '\[string\]\$OutputPath') { Fail-Test "missing OutputPath parameter: $($file.FullName)" }
         if ($content -notmatch '\[switch\]\$Quiet') { Fail-Test "missing Quiet parameter: $($file.FullName)" }
     }
+
+    . (Join-Path $Root 'lib\windows\Common.ps1')
+    $seed = Get-OpsForgeIdSeed 'opsforge'
+    if ($seed -ne '05115ad96d12923e') {
+        Fail-Test "finding ID seed is not stable: $seed"
+    }
+
+    $idFiles = @($files) + @(Get-Item (Join-Path $Root 'lib\windows\Common.ps1'))
+    $unstableHashes = $idFiles | Select-String -SimpleMatch '.GetHashCode('
+    if ($unstableHashes) {
+        Fail-Test "finding IDs still use GetHashCode: $($unstableHashes.Path -join ', ')"
+    }
 }
 
 function Test-WrapperTargets {
