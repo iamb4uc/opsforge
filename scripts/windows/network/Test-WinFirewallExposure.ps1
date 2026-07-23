@@ -39,7 +39,7 @@ foreach ($profile in $profiles) {
     }
 }
 foreach ($rule in $filters) {
-    $seed = [Math]::Abs(($rule.Name + $rule.LocalPort + $rule.RemoteAddress).GetHashCode())
+    $seed = Get-OpsForgeIdSeed ($rule.Name + $rule.LocalPort + $rule.RemoteAddress)
     if ($rule.RemoteAddress -match 'Any|0\.0\.0\.0/0|\*' -and $rule.LocalPort -match '3389|445|5985|5986|22') {
         $findings.Add((New-OpsForgeFinding "WIN-FW-ADMIN-$seed" 'Administrative port allowed from broad source' 'high' 'network' "$($rule.DisplayName) port=$($rule.LocalPort) remote=$($rule.RemoteAddress)" 'Restrict administrative services to trusted source ranges.'))
     }

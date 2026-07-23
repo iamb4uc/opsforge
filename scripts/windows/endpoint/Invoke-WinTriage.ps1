@@ -61,7 +61,7 @@ $runningProcesses | ForEach-Object {
     $path = $null
     try { $path = $_.Path } catch { }
     if (Test-OpsForgeUserWritablePath $path) {
-        $seed = [Math]::Abs(("$($_.Id)-$path").GetHashCode())
+        $seed = Get-OpsForgeIdSeed "$($_.Id)-$path"
         $signed = $null
         try { $signed = Get-AuthenticodeSignature -FilePath $path -ErrorAction Stop } catch { }
         if (-not $signed -or $signed.Status -ne 'Valid') {
@@ -72,14 +72,14 @@ $runningProcesses | ForEach-Object {
 
 $services | ForEach-Object {
     if ($_.PathName -match '(?i)\\Users\\|\\AppData\\|\\Temp\\|\\Windows\\Temp\\|powershell.*(-enc|-encodedcommand)') {
-        $findings.Add((New-OpsForgeFinding "WIN-TRIAGE-SERVICE-$([Math]::Abs($_.Name.GetHashCode()))" 'Service binary path is suspicious' 'high' 'endpoint' "$($_.Name) $($_.PathName)" 'Validate service creation source and binary signature.'))
+        $findings.Add((New-OpsForgeFinding "WIN-TRIAGE-SERVICE-$(Get-OpsForgeIdSeed $_.Name)" 'Service binary path is suspicious' 'high' 'endpoint' "$($_.Name) $($_.PathName)" 'Validate service creation source and binary signature.'))
     }
 }
 
 $scheduledTasks | ForEach-Object {
     $action = ($_.Actions | ForEach-Object { Get-OpsForgeTaskActionText $_ }) -join '; '
     if ($action -match '(?i)powershell.*(-enc|-encodedcommand)|\\AppData\\|\\Temp\\|\\Users\\Public\\') {
-        $findings.Add((New-OpsForgeFinding "WIN-TRIAGE-TASK-$([Math]::Abs(($_.TaskPath + $_.TaskName).GetHashCode()))" 'Suspicious scheduled task action' 'high' 'endpoint' "$($_.TaskPath)$($_.TaskName): $action" 'Export task XML and verify task author, action, and trigger.'))
+        $findings.Add((New-OpsForgeFinding "WIN-TRIAGE-TASK-$(Get-OpsForgeIdSeed ($_.TaskPath + $_.TaskName))" 'Suspicious scheduled task action' 'high' 'endpoint' "$($_.TaskPath)$($_.TaskName): $action" 'Export task XML and verify task author, action, and trigger.'))
     }
 }
 

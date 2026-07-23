@@ -34,7 +34,7 @@ try {
     }
     foreach ($exclusion in @($prefs.ExclusionPath) + @($prefs.ExclusionProcess) + @($prefs.ExclusionExtension)) {
         if ($exclusion -match '(?i)\\Users\\|\\AppData\\|\\Temp\\|\\ProgramData\\') {
-            $findings.Add((New-OpsForgeFinding "WIN-DEFENDER-EXCLUSION-$([Math]::Abs($exclusion.GetHashCode()))" 'Suspicious Defender exclusion' 'high' 'hardening' $exclusion 'Remove broad or user-writable exclusions unless formally approved.'))
+            $findings.Add((New-OpsForgeFinding "WIN-DEFENDER-EXCLUSION-$(Get-OpsForgeIdSeed $exclusion)" 'Suspicious Defender exclusion' 'high' 'hardening' $exclusion 'Remove broad or user-writable exclusions unless formally approved.'))
         }
     }
 } catch {

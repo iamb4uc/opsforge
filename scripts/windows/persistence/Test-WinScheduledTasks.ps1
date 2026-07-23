@@ -58,7 +58,7 @@ $tasks | ConvertTo-Json -Depth 6 | Set-Content -Encoding UTF8 -Path $rawPath
 
 foreach ($task in $tasks) {
     $action = [string]$task.Actions
-    $idSeed = [Math]::Abs(($task.TaskPath + $task.TaskName + $action).GetHashCode())
+    $idSeed = Get-OpsForgeIdSeed ($task.TaskPath + $task.TaskName + $action)
     if ($action -match '(?i)powershell.*(-enc|-encodedcommand)') {
         $findings.Add((New-OpsForgeFinding "WIN-TASK-ENC-$idSeed" 'Scheduled task runs encoded PowerShell' 'high' 'persistence' "$($task.TaskPath)$($task.TaskName): $action" 'Inspect the task XML, validate owner, and disable unauthorized tasks.'))
     }

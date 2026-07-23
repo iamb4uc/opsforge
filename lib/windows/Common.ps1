@@ -307,11 +307,13 @@ function Get-OpsForgeIdSeed {
     param([AllowNull()][object]$Value)
 
     $text = ConvertTo-OpsForgeText $Value
-    $hash = [int64]$text.GetHashCode()
-    if ($hash -lt 0) {
-        $hash = -$hash
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        $hash = $sha256.ComputeHash([Text.Encoding]::UTF8.GetBytes($text))
+    } finally {
+        $sha256.Dispose()
     }
-    return $hash
+    return [BitConverter]::ToString($hash, 0, 8).Replace('-', '').ToLowerInvariant()
 }
 
 function Get-OpsForgeTaskActionText {

@@ -20,7 +20,7 @@ $start = (Get-Date).AddDays(-1 * $LookbackDays)
 
 function Add-EventFinding {
     param([string]$IdPrefix, [string]$Title, [string]$Severity, [object]$Event)
-    $seed = [Math]::Abs(("$IdPrefix-$($Event.RecordId)-$($Event.TimeCreated)").GetHashCode())
+    $seed = Get-OpsForgeIdSeed "$IdPrefix-$($Event.RecordId)-$($Event.TimeCreated)"
     $findings.Add((New-OpsForgeFinding "$IdPrefix-$seed" $Title $Severity 'forensic' "$($Event.LogName) id=$($Event.Id) time=$($Event.TimeCreated) record=$($Event.RecordId)" 'Correlate with administrative activity, EDR telemetry, and change tickets.'))
 }
 

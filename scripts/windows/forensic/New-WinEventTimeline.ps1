@@ -39,7 +39,7 @@ foreach ($log in $logs) {
                 severity = $severity
             })
             if ($event.Id -in 1102,4720,4728,4732,7045,4698) {
-                $seed = [Math]::Abs(("$log-$($event.RecordId)-$($event.Id)").GetHashCode())
+                $seed = Get-OpsForgeIdSeed "$log-$($event.RecordId)-$($event.Id)"
                 $findings.Add((New-OpsForgeFinding "WIN-EVENT-$seed" "Important security event $($event.Id)" $severity 'forensic' "$log record=$($event.RecordId) time=$($event.TimeCreated)" 'Review the event details and correlate with change tickets and endpoint activity.'))
             }
         }
