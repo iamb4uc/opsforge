@@ -45,7 +45,7 @@ Get-NetAdapter -ErrorAction SilentlyContinue | ConvertTo-Json -Depth 4 | Set-Con
 Get-NetRoute -ErrorAction SilentlyContinue | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\routes.json')
 
 foreach ($record in $records) {
-    $seed = [Math]::Abs(("$($record.LocalAddress):$($record.LocalPort):$($record.OwningProcess)").GetHashCode())
+    $seed = Get-OpsForgeIdSeed "$($record.LocalAddress):$($record.LocalPort):$($record.OwningProcess)"
     if ($record.LocalPort -in 22, 3389, 5985, 5986, 445, 135, 139 -and $record.LocalAddress -in '0.0.0.0','::') {
         $findings.Add((New-OpsForgeFinding "WIN-NET-ADMIN-$seed" 'Administrative service listens on all interfaces' 'high' 'network' "$($record.LocalAddress):$($record.LocalPort) $($record.ProcessName)" 'Confirm exposure is intended and restricted by firewall policy.'))
     }

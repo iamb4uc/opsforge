@@ -30,7 +30,7 @@ $tasks | ConvertTo-Json -Depth 6 | Set-Content -Encoding UTF8 -Path (Join-Path $
 
 foreach ($member in @($admins)) {
     if ($member.ObjectClass -eq 'User' -and $member.Name -notmatch '\\Administrator$') {
-        $findings.Add((New-OpsForgeFinding "WIN-PRIV-ADMIN-$([Math]::Abs($member.Name.GetHashCode()))" 'Non-default local administrator present' 'medium' 'hardening' $member.Name 'Validate local administrator membership against access policy.'))
+        $findings.Add((New-OpsForgeFinding "WIN-PRIV-ADMIN-$(Get-OpsForgeIdSeed $member.Name)" 'Non-default local administrator present' 'medium' 'hardening' $member.Name 'Validate local administrator membership against access policy.'))
     }
 }
 if (@($rdp).Count -gt 0) {
@@ -43,14 +43,14 @@ if (@($backup).Count -gt 0) {
 }
 foreach ($svc in $services | Where-Object { $_.StartName -eq 'LocalSystem' }) {
     if ($svc.PathName -match '(?i)\\Users\\|\\ProgramData\\|\\Temp\\') {
-        $findings.Add((New-OpsForgeFinding "WIN-PRIV-SYSTEM-SVC-$([Math]::Abs($svc.Name.GetHashCode()))" 'LocalSystem service references writable-looking path' 'high' 'hardening' "$($svc.Name): $($svc.PathName)" 'Harden ACLs and verify service binary ownership.'))
+        $findings.Add((New-OpsForgeFinding "WIN-PRIV-SYSTEM-SVC-$(Get-OpsForgeIdSeed $svc.Name)" 'LocalSystem service references writable-looking path' 'high' 'hardening' "$($svc.Name): $($svc.PathName)" 'Harden ACLs and verify service binary ownership.'))
     }
 }
 foreach ($task in $tasks) {
     if ($task.Principal.UserId -match 'SYSTEM|Administrators') {
         $action = ($task.Actions | ForEach-Object { Get-OpsForgeTaskActionText $_ }) -join '; '
         if ($action -match '(?i)\\Users\\|\\AppData\\|\\Temp\\') {
-            $findings.Add((New-OpsForgeFinding "WIN-PRIV-ADMIN-TASK-$([Math]::Abs(($task.TaskPath + $task.TaskName).GetHashCode()))" 'Privileged scheduled task executes writable-looking path' 'high' 'hardening' "$($task.TaskPath)$($task.TaskName): $action" 'Validate task path and remove unauthorized privileged automation.'))
+            $findings.Add((New-OpsForgeFinding "WIN-PRIV-ADMIN-TASK-$(Get-OpsForgeIdSeed ($task.TaskPath + $task.TaskName))" 'Privileged scheduled task executes writable-looking path' 'high' 'hardening' "$($task.TaskPath)$($task.TaskName): $action" 'Validate task path and remove unauthorized privileged automation.'))
         }
     }
 }

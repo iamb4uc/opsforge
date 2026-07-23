@@ -20,7 +20,7 @@ $services | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 -Path (Join-Pat
 
 foreach ($svc in $services) {
     $path = [string]$svc.PathName
-    $seed = [Math]::Abs(($svc.Name + $path).GetHashCode())
+    $seed = Get-OpsForgeIdSeed ($svc.Name + $path)
     if ($path -match '^[A-Za-z]:\\[^"].*\s+.*\.exe') {
         $findings.Add((New-OpsForgeFinding "WIN-SVC-UNQUOTED-$seed" 'Service has unquoted executable path with spaces' 'medium' 'endpoint' "$($svc.Name): $path" 'Quote the service ImagePath and validate directory ACLs.'))
     }
