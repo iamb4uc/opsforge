@@ -35,4 +35,28 @@ Describe 'opsforge PowerShell scripts' {
 
         ($missing -join [Environment]::NewLine) | Should -Be ''
     }
+
+    It 'keeps the windows dispatch flow aligned with the companion path' {
+        $wrapper = Get-Content -Raw -Path (Join-Path $script:RepoRoot 'bin\opsforge.ps1')
+        $patterns = @(
+            "'windows:doctor' { Invoke-OpsForgeDoctor; break }",
+            "'windows:quick' { Invoke-WindowsProfile -Profile 'quick'; break }",
+            "'windows:ir' { Invoke-WindowsProfile -Profile 'ir'; break }",
+            "'windows:full' { Invoke-WindowsProfile -Profile 'full'; break }",
+            "'windows:all' { Invoke-WindowsAll; break }",
+            "'windows:triage' { Invoke-OpsForgeScript (Join-Path `$Root 'scripts\windows\endpoint\Invoke-WinTriage.ps1'); break }",
+            "'windows:persistence' { Invoke-OpsForgeScript (Join-Path `$Root 'scripts\windows\persistence\Find-WinPersistence.ps1'); break }",
+            "'windows:tasks' { Invoke-OpsForgeScript (Join-Path `$Root 'scripts\windows\persistence\Test-WinScheduledTasks.ps1'); break }",
+            "'windows:network' { Invoke-OpsForgeScript (Join-Path `$Root 'scripts\windows\network\Get-WinNetworkExposure.ps1'); break }",
+            "'windows:timeline' { Invoke-OpsForgeScript (Join-Path `$Root 'scripts\windows\forensic\New-WinEventTimeline.ps1'); break }"
+        )
+
+        $missing = foreach ($pattern in $patterns) {
+            if (-not $wrapper.Contains($pattern)) {
+                $pattern
+            }
+        }
+
+        ($missing -join [Environment]::NewLine) | Should -Be ''
+    }
 }
