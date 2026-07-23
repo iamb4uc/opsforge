@@ -132,6 +132,23 @@ assert_init_marker() {
   say "init marker matched: $expected"
 }
 
+assert_doctor_limitations() {
+  local expected="${OPSFORGE_EXPECT_INIT:-}"
+  local doctor_file="$LINUX_FEASIBILITY_ROOT/doctor.txt"
+  local skip_count
+
+  [ "$expected" = "runit" ] || [ "$expected" = "openrc" ] || return 0
+
+  OPSFORGE_DOCTOR_OUTPUT="$LINUX_FEASIBILITY_ROOT" \
+    "$ROOT/bin/opsforge" doctor > "$doctor_file"
+  skip_count="$(
+    grep -Ec 'systemd checks are skipped on this host|systemd-only service evidence is skipped' \
+      "$doctor_file" || true
+  )"
+  [ "$skip_count" -eq 1 ] ||
+    fail "doctor reported duplicate systemd limitations for $expected"
+}
+
 run_runtime_linux_one() {
   local name="$1"
   local script_name="$2"
@@ -407,6 +424,7 @@ test_linux_feasibility() {
   printf 'tmp-log|%s/test.log|critical|1440\n' "$cfg" > "$cfg/log-sources.conf"
   printf 'test\n' > "$cfg/test.log"
 
+  assert_doctor_limitations
   run_one triage "$ROOT/bin/opsforge" linux triage --output "$LINUX_FEASIBILITY_ROOT"
   assert_init_marker
   run_one persistence "$ROOT/bin/opsforge" linux persistence --output "$LINUX_FEASIBILITY_ROOT"

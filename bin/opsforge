@@ -147,9 +147,6 @@ run_doctor() {
   if ! have_command journalctl; then
     limitations+=("journal collection is unavailable without journalctl")
   fi
-  if [ "$init_system" != "systemd" ] && ! have_command systemctl; then
-    limitations+=("systemd checks are skipped on this host")
-  fi
   if [ "$init_system" = "runit" ]; then
     limitations+=("runit host detected; systemd-only service evidence is skipped")
   elif [ "$init_system" = "openrc" ]; then
