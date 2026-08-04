@@ -13,6 +13,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $Root = Resolve-Path (Join-Path $PSScriptRoot '..')
+. (Join-Path $Root 'lib\windows\Common.ps1')
 $ScriptArgs = @{}
 if ($OutputPath) { $ScriptArgs.OutputPath = $OutputPath }
 if ($Json) { $ScriptArgs.Json = $true }
@@ -162,9 +163,7 @@ function Test-OutputContract {
     }
 
     $findingsJson = Get-Content -Raw -Path (Join-Path $OutputDirectory 'findings.json')
-    if (-not $findingsJson.TrimStart().StartsWith('[')) {
-        throw "findings JSON must be an array: $OutputDirectory"
-    }
+    Assert-OpsForgeFindingsJson -Json $findingsJson -Context $OutputDirectory
     $findingsJson | ConvertFrom-Json | Out-Null
 }
 

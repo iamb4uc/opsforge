@@ -45,6 +45,16 @@ function New-OpsForgeFinding {
     }
 }
 
+function Assert-OpsForgeFindingsJson {
+    param(
+        [Parameter(Mandatory = $true)][string]$Json,
+        [Parameter(Mandatory = $true)][string]$Context
+    )
+    if (-not $Json.TrimStart().StartsWith('[')) {
+        throw "findings JSON must be an array: $Context"
+    }
+}
+
 function Save-OpsForgeFindings {
     param(
         [AllowEmptyCollection()][object[]]$Findings = @(),

@@ -72,4 +72,18 @@ Describe 'opsforge PowerShell scripts' {
         $json.TrimStart().StartsWith('[') | Should -Be $true
         @($json | ConvertFrom-Json).Count | Should -Be 1
     }
+
+    It 'rejects non-array finding JSON in both contract paths' {
+        . (Join-Path $script:RepoRoot 'lib\windows\Common.ps1')
+
+        { Assert-OpsForgeFindingsJson -Json '{}' -Context 'test' } |
+            Should -Throw '*must be an array*'
+        { Assert-OpsForgeFindingsJson -Json '[]' -Context 'test' } |
+            Should -Not -Throw
+
+        foreach ($path in @('bin\test.ps1','bin\opsforge.ps1')) {
+            Get-Content -Raw -Path (Join-Path $script:RepoRoot $path) |
+                Should -Match 'Assert-OpsForgeFindingsJson'
+        }
+    }
 }
