@@ -79,6 +79,9 @@ function Test-OutputContract {
     $rootFindings = Get-Content -Raw -Path (Join-Path $OutputDirectory 'findings.json')
     $normalizedFindings = Get-Content -Raw -Path (Join-Path $OutputDirectory 'normalized\findings.json')
     if ($rootFindings -ne $normalizedFindings) { Fail-Test "normalized findings differ: $OutputDirectory" }
+    if (-not $rootFindings.TrimStart().StartsWith('[')) {
+        Fail-Test "findings JSON must be an array: $OutputDirectory"
+    }
 
     $findings = $rootFindings | ConvertFrom-Json
     if ($null -eq $findings) { $findings = @() }
