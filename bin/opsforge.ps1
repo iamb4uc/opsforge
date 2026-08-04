@@ -161,9 +161,11 @@ function Test-OutputContract {
         }
     }
 
-    Get-Content -Raw -Path (Join-Path $OutputDirectory 'findings.json') |
-        ConvertFrom-Json |
-        Out-Null
+    $findingsJson = Get-Content -Raw -Path (Join-Path $OutputDirectory 'findings.json')
+    if (-not $findingsJson.TrimStart().StartsWith('[')) {
+        throw "findings JSON must be an array: $OutputDirectory"
+    }
+    $findingsJson | ConvertFrom-Json | Out-Null
 }
 
 function Invoke-AllOne {
