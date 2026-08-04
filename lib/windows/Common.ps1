@@ -55,7 +55,7 @@ function Save-OpsForgeFindings {
     if (@($Findings).Count -eq 0) {
         Write-OpsForgeTextFile -Path $jsonPath -Lines @('[]')
     } else {
-        Write-OpsForgeTextFile -Path $jsonPath -Lines @((@($Findings) | ConvertTo-Json -Depth 6))
+        Write-OpsForgeTextFile -Path $jsonPath -Lines @((ConvertTo-Json -InputObject @($Findings) -Depth 6))
     }
     Copy-Item -Force -Path $jsonPath -Destination $normalizedPath
 }
