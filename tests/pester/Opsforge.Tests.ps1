@@ -59,4 +59,17 @@ Describe 'opsforge PowerShell scripts' {
 
         ($missing -join [Environment]::NewLine) | Should -Be ''
     }
+
+    It 'writes one finding as a JSON array' {
+        . (Join-Path $script:RepoRoot 'lib\windows\Common.ps1')
+        $outputDirectory = Join-Path $TestDrive 'single-finding'
+        New-Item -ItemType Directory -Force -Path (Join-Path $outputDirectory 'normalized') | Out-Null
+        $finding = New-OpsForgeFinding 'TEST-001' 'Test finding' 'info' 'test' 'evidence' 'review'
+
+        Save-OpsForgeFindings -Findings @($finding) -OutputDirectory $outputDirectory
+
+        $json = Get-Content -Raw -Path (Join-Path $outputDirectory 'findings.json')
+        $json.TrimStart().StartsWith('[') | Should -Be $true
+        @($json | ConvertFrom-Json).Count | Should -Be 1
+    }
 }
