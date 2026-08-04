@@ -45,6 +45,16 @@ function New-OpsForgeFinding {
     }
 }
 
+function Assert-OpsForgeFindingsJson {
+    param(
+        [Parameter(Mandatory = $true)][string]$Json,
+        [Parameter(Mandatory = $true)][string]$Context
+    )
+    if (-not $Json.TrimStart().StartsWith('[')) {
+        throw "findings JSON must be an array: $Context"
+    }
+}
+
 function Save-OpsForgeFindings {
     param(
         [AllowEmptyCollection()][object[]]$Findings = @(),
@@ -55,7 +65,7 @@ function Save-OpsForgeFindings {
     if (@($Findings).Count -eq 0) {
         Write-OpsForgeTextFile -Path $jsonPath -Lines @('[]')
     } else {
-        Write-OpsForgeTextFile -Path $jsonPath -Lines @((@($Findings) | ConvertTo-Json -Depth 6))
+        Write-OpsForgeTextFile -Path $jsonPath -Lines @((ConvertTo-Json -InputObject @($Findings) -Depth 6))
     }
     Copy-Item -Force -Path $jsonPath -Destination $normalizedPath
 }

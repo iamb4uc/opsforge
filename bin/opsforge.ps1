@@ -13,6 +13,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $Root = Resolve-Path (Join-Path $PSScriptRoot '..')
+. (Join-Path $Root 'lib\windows\Common.ps1')
 $ScriptArgs = @{}
 if ($OutputPath) { $ScriptArgs.OutputPath = $OutputPath }
 if ($Json) { $ScriptArgs.Json = $true }
@@ -161,9 +162,9 @@ function Test-OutputContract {
         }
     }
 
-    Get-Content -Raw -Path (Join-Path $OutputDirectory 'findings.json') |
-        ConvertFrom-Json |
-        Out-Null
+    $findingsJson = Get-Content -Raw -Path (Join-Path $OutputDirectory 'findings.json')
+    Assert-OpsForgeFindingsJson -Json $findingsJson -Context $OutputDirectory
+    $findingsJson | ConvertFrom-Json | Out-Null
 }
 
 function Invoke-AllOne {

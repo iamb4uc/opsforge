@@ -59,4 +59,31 @@ Describe 'opsforge PowerShell scripts' {
 
         ($missing -join [Environment]::NewLine) | Should -Be ''
     }
+
+    It 'writes one finding as a JSON array' {
+        . (Join-Path $script:RepoRoot 'lib\windows\Common.ps1')
+        $outputDirectory = Join-Path $TestDrive 'single-finding'
+        New-Item -ItemType Directory -Force -Path (Join-Path $outputDirectory 'normalized') | Out-Null
+        $finding = New-OpsForgeFinding 'TEST-001' 'Test finding' 'info' 'test' 'evidence' 'review'
+
+        Save-OpsForgeFindings -Findings @($finding) -OutputDirectory $outputDirectory
+
+        $json = Get-Content -Raw -Path (Join-Path $outputDirectory 'findings.json')
+        $json.TrimStart().StartsWith('[') | Should -Be $true
+        @($json | ConvertFrom-Json).Count | Should -Be 1
+    }
+
+    It 'rejects non-array finding JSON in both contract paths' {
+        . (Join-Path $script:RepoRoot 'lib\windows\Common.ps1')
+
+        { Assert-OpsForgeFindingsJson -Json '{}' -Context 'test' } |
+            Should -Throw '*must be an array*'
+        { Assert-OpsForgeFindingsJson -Json '[]' -Context 'test' } |
+            Should -Not -Throw
+
+        foreach ($path in @('bin\test.ps1','bin\opsforge.ps1')) {
+            Get-Content -Raw -Path (Join-Path $script:RepoRoot $path) |
+                Should -Match 'Assert-OpsForgeFindingsJson'
+        }
+    }
 }

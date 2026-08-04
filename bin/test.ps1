@@ -8,6 +8,7 @@ $ErrorActionPreference = "Stop"
 
 $Root = Resolve-Path (Join-Path $PSScriptRoot '..')
 $TestRoot = if ($env:OPSFORGE_TEST_OUTPUT) { $env:OPSFORGE_TEST_OUTPUT } else { Join-Path $Root '.ci-artifacts' }
+. (Join-Path $Root 'lib\windows\Common.ps1')
 
 function Write-TestLine {
     param([string]$Message)
@@ -79,6 +80,7 @@ function Test-OutputContract {
     $rootFindings = Get-Content -Raw -Path (Join-Path $OutputDirectory 'findings.json')
     $normalizedFindings = Get-Content -Raw -Path (Join-Path $OutputDirectory 'normalized\findings.json')
     if ($rootFindings -ne $normalizedFindings) { Fail-Test "normalized findings differ: $OutputDirectory" }
+    Assert-OpsForgeFindingsJson -Json $rootFindings -Context $OutputDirectory
 
     $findings = $rootFindings | ConvertFrom-Json
     if ($null -eq $findings) { $findings = @() }
@@ -141,7 +143,6 @@ function Test-Static {
         if ($content -notmatch '\[switch\]\$Quiet') { Fail-Test "missing Quiet parameter: $($file.FullName)" }
     }
 
-    . (Join-Path $Root 'lib\windows\Common.ps1')
     $seed = Get-OpsForgeIdSeed 'opsforge'
     if ($seed -ne '05115ad96d12923e') {
         Fail-Test "finding ID seed is not stable: $seed"
