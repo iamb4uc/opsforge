@@ -53,6 +53,10 @@ validate_with_jq() {
     all(.[]; (
       has("id") and has("title") and has("severity") and has("host") and
       has("category") and has("evidence") and has("recommendation") and
+      (.id | type == "string") and (.title | type == "string") and
+      (.severity | type == "string") and (.host | type == "string") and
+      (.category | type == "string") and (.evidence | type == "string") and
+      (.recommendation | type == "string") and
       (.severity | IN("critical", "high", "medium", "low", "info"))
     ))
   ' "$file" >/dev/null
@@ -60,43 +64,18 @@ validate_with_jq() {
 
 validate_with_shell() {
   local file="$1"
-  local ids titles severities hosts categories evidence recommendations bad_severity
+  local compact string record
 
-  awk '
-    BEGIN {ok=1}
-    {
-      line=$0
-      sub(/^[[:space:]]*/, "", line)
-      sub(/[[:space:]]*$/, "", line)
-      if (NR == 1 && line !~ /^\[/) ok=0
-      if (line != "") last=line
-    }
-    END {
-      if (last !~ /\]$/) ok=0
-      exit ok ? 0 : 1
-    }
-  ' "$file" || fail "findings.json is not a simple JSON array: $file"
-
-  ids="$(finding_count "$file")"
-  [ "$ids" -eq 0 ] && return 0
-
-  titles="$(field_count "$file" "title")"
-  severities="$(field_count "$file" "severity")"
-  hosts="$(field_count "$file" "host")"
-  categories="$(field_count "$file" "category")"
-  evidence="$(field_count "$file" "evidence")"
-  recommendations="$(field_count "$file" "recommendation")"
-
-  [ "$titles" -eq "$ids" ] || fail "title count does not match id count in $file"
-  [ "$severities" -eq "$ids" ] || fail "severity count does not match id count in $file"
-  [ "$hosts" -eq "$ids" ] || fail "host count does not match id count in $file"
-  [ "$categories" -eq "$ids" ] || fail "category count does not match id count in $file"
-  [ "$evidence" -eq "$ids" ] || fail "evidence count does not match id count in $file"
-  [ "$recommendations" -eq "$ids" ] || fail "recommendation count does not match id count in $file"
-
-  bad_severity="$({ grep -Eo '"severity"[[:space:]]*:[[:space:]]*"[^"]*"' "$file" || true; } |
-    awk -F '"' '$4 !~ /^(critical|high|medium|low|info)$/ {print $4; bad=1} END {exit bad ? 0 : 1}' || true)"
-  [ -z "$bad_severity" ] || fail "invalid severity in $file: $bad_severity"
+  compact="$(tr -d '\n\r\t ' < "$file")"
+  [ "$compact" = '[]' ] && return 0
+  case "$compact" in
+    \[\{*\}\]) ;;
+    *) fail "findings.json is not a simple JSON array: $file" ;;
+  esac
+  string='"([^"\\]|\\(["\\/bfnrt]|u[0-9a-fA-F]{4}))*"'
+  record="[{]\"id\":$string,\"title\":$string,\"severity\":\"(critical|high|medium|low|info)\",\"host\":$string,\"category\":$string,\"evidence\":$string,\"recommendation\":${string}[}]"
+  printf '%s\n' "$compact" | grep -Eq "^\\[($record)(,$record)*\\]$" ||
+    fail "findings.json does not match the shell-only schema: $file"
 }
 
 validate_findings() {
