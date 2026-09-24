@@ -200,6 +200,8 @@ test_help() {
     "$file" --help >/dev/null
   done < <(find "$ROOT/scripts/linux" -type f -name '*.sh' | sort)
   "$ROOT/bin/opsforge" --help >/dev/null
+  "$ROOT/bin/opsforge" linux --help >/dev/null
+  "$ROOT/bin/opsforge" linux quick --help >/dev/null
   "$ROOT/bin/test" --help >/dev/null
   "$ROOT/bin/validate-output-contract" --help >/dev/null
   "$ROOT/install.sh" --help >/dev/null
