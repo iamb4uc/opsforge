@@ -623,13 +623,18 @@ platform="$1"
 command_name="$2"
 shift 2
 
+if [ "$platform" = linux ]; then
+  case "$command_name" in
+    -h|--help) usage; exit 0 ;;
+    quick|ir|noc|full|all)
+      case "${1:-}" in -h|--help) usage; exit 0 ;; esac
+      ;;
+  esac
+fi
+
 case "$platform:$command_name" in
-  linux:-h|linux:--help) usage ;;
   linux:doctor) run_doctor "$@" ;;
-  linux:quick|linux:ir|linux:noc|linux:full|linux:all)
-    case "${1:-}" in -h|--help) usage; exit 0 ;; esac
-    run_linux_profile "$command_name" "$@"
-    ;;
+  linux:quick|linux:ir|linux:noc|linux:full|linux:all) run_linux_profile "$command_name" "$@" ;;
   linux:triage) exec "$ROOT/scripts/linux/endpoint/linux-triage-collector.sh" "$@" ;;
   linux:persistence) exec "$ROOT/scripts/linux/persistence/linux-persistence-hunter.sh" "$@" ;;
   linux:deleted-binaries|linux:deleted-binary) exec "$ROOT/scripts/linux/forensic/deleted-binary-detector.sh" "$@" ;;
