@@ -448,6 +448,9 @@ test_security_regressions() {
   out_dir="$(latest_output_dir "$run_dir" ssh-hardening-audit)"
   assert_text "$out_dir/findings.json" 'LINUX-SSH-PasswordAuthentication'
   assert_text "$out_dir/report.md" 'Match blocks are evaluated only'
+  if grep -F 'LINUX-SSH-WEAK-CRYPTO' "$out_dir/findings.json" >/dev/null; then
+    fail "default SSH algorithms were reported as weak"
+  fi
 
   fixture_root="$run_dir/privileged"
   mkdir -p "$fixture_root"
@@ -463,6 +466,16 @@ test_security_regressions() {
   if grep -F 'LINUX-SUID-WW-' "$changed_dir/findings.json" >/dev/null; then
     fail "ordinary 4755 file was reported as world-writable"
   fi
+  chmod 4775 "$fixture_root/tool"
+  OPSFORGE_SUID_SCAN_ROOT="$fixture_root" "$ROOT/scripts/linux/hardening/suid-drift-monitor.sh" --check --baseline-file "$baseline" --output "$run_dir" --quiet
+  changed_dir="$(latest_output_dir "$run_dir" suid-drift-monitor)"
+  if grep -F 'LINUX-SUID-WW-' "$changed_dir/findings.json" >/dev/null; then
+    fail "group-writable 4775 file was reported as world-writable"
+  fi
+  chmod 4777 "$fixture_root/tool"
+  OPSFORGE_SUID_SCAN_ROOT="$fixture_root" "$ROOT/scripts/linux/hardening/suid-drift-monitor.sh" --check --baseline-file "$baseline" --output "$run_dir" --quiet
+  changed_dir="$(latest_output_dir "$run_dir" suid-drift-monitor)"
+  assert_text "$changed_dir/findings.json" 'LINUX-SUID-WW-'
 
   fake_bin="$run_dir/fake-bin"
   mkdir -p "$fake_bin"
@@ -473,8 +486,24 @@ test_security_regressions() {
   if grep -F 'LINUX-FW-ADMIN-PORTS' "$out_dir/findings.json" >/dev/null; then
     fail "drop rule was reported as an allowed administrative port"
   fi
+  printf '#!/usr/bin/env bash\nprintf "table inet filter { chain input { tcp dport 22 accept } }\\n"\n' > "$fake_bin/nft"
+  PATH="$fake_bin:$PATH" "$ROOT/scripts/linux/network/firewall-rule-analyzer.sh" --output "$run_dir" --quiet
+  out_dir="$(latest_output_dir "$run_dir" firewall-rule-analyzer)"
+  assert_text "$out_dir/findings.json" 'LINUX-FW-ADMIN-PORTS'
   assert_text "$out_dir/normalized/collection-status.tsv" 'unavailable'
   assert_text "$out_dir/report.md" '## Collection Status'
+  printf '#!/usr/bin/env bash\nprintf "table inet filter { chain input { tcp dport 22 drop } }\\n"\n' > "$fake_bin/nft"
+  printf '#!/usr/bin/env bash\nprintf "22/tcp ALLOW IN Anywhere\\n"\n' > "$fake_bin/ufw"
+  chmod 755 "$fake_bin/ufw"
+  PATH="$fake_bin:$PATH" "$ROOT/scripts/linux/network/firewall-rule-analyzer.sh" --output "$run_dir" --quiet
+  out_dir="$(latest_output_dir "$run_dir" firewall-rule-analyzer)"
+  assert_text "$out_dir/findings.json" 'LINUX-FW-OPEN-ADMIN'
+  printf '#!/usr/bin/env bash\nprintf "unavailable\\n"\n' > "$fake_bin/ufw"
+  printf '#!/usr/bin/env bash\nprintf "services: ssh\\n"\n' > "$fake_bin/firewall-cmd"
+  chmod 755 "$fake_bin/firewall-cmd"
+  PATH="$fake_bin:$PATH" "$ROOT/scripts/linux/network/firewall-rule-analyzer.sh" --output "$run_dir" --quiet
+  out_dir="$(latest_output_dir "$run_dir" firewall-rule-analyzer)"
+  assert_text "$out_dir/findings.json" 'LINUX-FW-ADMIN-PORTS'
 }
 
 test_linux_fixtures() {

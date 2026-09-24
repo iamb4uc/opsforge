@@ -92,7 +92,7 @@ else
       "Privileged file content changed" "high" "$HOST" "hardening" "$line" \
       "Investigate the changed hash and validate package ownership or approved maintenance."
   done < "$OUT_DIR/raw/changed-privileged-files.txt"
-  awk -F '\t' '{ mode=$1; perms=substr(mode, length(mode) - 2); if (substr(perms, 2, 1) ~ /[2367]/ || substr(perms, 3, 1) ~ /[2367]/) print }' "$CURRENT" > "$OUT_DIR/raw/world-writable-privileged-files.txt"
+  awk -F '\t' '{ mode=$1; perms=substr(mode, length(mode) - 2); if (substr(perms, 3, 1) ~ /[2367]/) print }' "$CURRENT" > "$OUT_DIR/raw/world-writable-privileged-files.txt"
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     severity="critical"
