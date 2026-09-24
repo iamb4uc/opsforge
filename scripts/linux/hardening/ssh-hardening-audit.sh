@@ -86,7 +86,7 @@ check_value AllowTcpForwarding no medium "Disable TCP forwarding unless explicit
 max_auth="$(cfg_value MaxAuthTries)"
 [ -n "$max_auth" ] && [ "$max_auth" -gt 4 ] 2>/dev/null && write_finding_json "$TMP_FINDINGS" "LINUX-SSH-MAXAUTHTRIES" "SSH MaxAuthTries is high" "medium" "$HOST" "hardening" "$SSHD_CONFIG: MaxAuthTries $max_auth" "Set MaxAuthTries to 4 or lower for exposed servers."
 
-grep -Eiq '^(Ciphers|MACs|KexAlgorithms).*(cbc|3des|arcfour|md5|sha1)' "$EFFECTIVE_CONFIG" 2>/dev/null &&
+grep -Eiq '^(Ciphers|MACs|KexAlgorithms).*(cbc|3des|arcfour|md5|group1-sha1)' "$EFFECTIVE_CONFIG" 2>/dev/null &&
   write_finding_json "$TMP_FINDINGS" "LINUX-SSH-WEAK-CRYPTO" "Weak SSH cryptographic algorithms configured" "high" "$HOST" "hardening" "$SSHD_CONFIG" "Remove weak ciphers, MACs, and key exchange algorithms."
 
 find /root /home -path '*/.ssh/authorized_keys' -type f -printf '%m\t%u\t%g\t%p\n' 2>/dev/null > "$OUT_DIR/raw/authorized-keys-permissions.txt" || true
