@@ -15,17 +15,13 @@ jobs:
       - name: checkout
         uses: actions/checkout@v4
 
-      - name: parser check
-        shell: pwsh
-        run: .\bin\test.ps1 parser
+      - name: behavioral validation in Windows PowerShell
+        shell: powershell
+        run: .\bin\test.ps1 all
 
-      - name: wrapper command map
+      - name: behavioral validation in PowerShell
         shell: pwsh
-        run: .\bin\test.ps1 wrapper-targets
-
-      - name: basic PowerShell help safety
-        shell: pwsh
-        run: .\bin\test.ps1 static
+        run: .\bin\test.ps1 all
 
       - name: command availability
         shell: powershell
@@ -60,29 +56,21 @@ jobs:
             }
           }
 
-      - name: pester if available
+      - name: pester
         shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
-          $tests = Get-ChildItem -Path .\tests\pester -Recurse -Filter *.Tests.ps1 -ErrorAction SilentlyContinue
-          if (-not $tests) {
-            Write-Host "No Pester tests found; skipping"
-          } elseif (Get-Module -ListAvailable -Name Pester) {
-            Invoke-Pester -Path .\tests\pester
-          } else {
-            Write-Host "Pester not installed on runner; skipping"
-          }
-
-      - name: safe runtime checks
-        shell: pwsh
-        run: .\bin\test.ps1 runtime
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module Pester -MinimumVersion 5.0.0 -Force -Scope CurrentUser
+          $result = Invoke-Pester -Path .\tests\pester -PassThru
+          if ($result.FailedCount -ne 0) { throw "Pester failures: $($result.FailedCount)" }
 
       - name: doctor
-        shell: pwsh
+        shell: powershell
         run: .\bin\opsforge.ps1 doctor
 
       - name: windows all
-        shell: pwsh
+        shell: powershell
         run: .\bin\opsforge.ps1 windows all -OutputPath .\output -Json -Markdown
 
       - name: upload windows artifacts on failure
