@@ -318,6 +318,42 @@ test_script_catalog() {
 test_output_contract() {
   say "checking output contract fixture"
   "$ROOT/bin/validate-output-contract" "$ROOT/tests/fixtures/output-contract-valid" >/dev/null
+  local run_dir invalid shell_tools tool
+  run_dir="$(make_run_dir output-contract)"
+  shell_tools="$run_dir/shell-tools"
+  mkdir -p "$shell_tools"
+  for tool in bash tr grep awk wc cmp; do
+    ln -s "$(command -v "$tool")" "$shell_tools/$tool"
+  done
+  invalid="$run_dir/invalid"
+  cp -R "$ROOT/tests/fixtures/output-contract-valid" "$invalid"
+  printf '[not json]\n' > "$invalid/findings.json"
+  cp "$invalid/findings.json" "$invalid/normalized/findings.json"
+  if "$ROOT/bin/validate-output-contract" "$invalid" >/dev/null 2>&1; then
+    fail "output validator accepted invalid JSON"
+  fi
+  if PATH="$shell_tools" "$ROOT/bin/validate-output-contract" "$invalid" >/dev/null 2>&1; then
+    fail "shell-only output validator accepted invalid JSON"
+  fi
+  PATH="$shell_tools" "$ROOT/bin/validate-output-contract" "$ROOT/tests/fixtures/output-contract-valid" >/dev/null
+  cp -R "$ROOT/tests/fixtures/output-contract-valid" "$run_dir/wrong-types"
+  sed -i 's/"id":"FIXTURE-001"/"id":1/' "$run_dir/wrong-types/findings.json"
+  cp "$run_dir/wrong-types/findings.json" "$run_dir/wrong-types/normalized/findings.json"
+  if "$ROOT/bin/validate-output-contract" "$run_dir/wrong-types" >/dev/null 2>&1; then
+    fail "output validator accepted wrong field types"
+  fi
+  if PATH="$shell_tools" "$ROOT/bin/validate-output-contract" "$run_dir/wrong-types" >/dev/null 2>&1; then
+    fail "shell-only output validator accepted wrong field types"
+  fi
+  cp -R "$ROOT/tests/fixtures/output-contract-valid" "$run_dir/bad-escape"
+  sed -i 's/FIXTURE-001/FIXTURE-\\q/' "$run_dir/bad-escape/findings.json"
+  cp "$run_dir/bad-escape/findings.json" "$run_dir/bad-escape/normalized/findings.json"
+  if PATH="$shell_tools" "$ROOT/bin/validate-output-contract" "$run_dir/bad-escape" >/dev/null 2>&1; then
+    fail "shell-only output validator accepted an invalid JSON escape"
+  fi
+  local escaped
+  escaped="$(source "$ROOT/lib/common.sh"; json_escape $'a\001b')"
+  [ "$escaped" = 'a\u0001b' ] || fail "json escaping left a control character unescaped"
 }
 
 test_installer() {
