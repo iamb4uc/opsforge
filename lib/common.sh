@@ -24,6 +24,15 @@ opsforge_mkdir() {
   chmod 700 "$1" "$1/raw" "$1/normalized"
 }
 
+opsforge_make_private_dir() {
+  local base="$1" prefix="$2"
+  if [ -L "$base" ]; then
+    printf '[ERROR] output base is a symlink: %s\n' "$base" >&2
+    return 1
+  fi
+  mktemp -d "${base%/}/${prefix}-$(opsforge_timestamp).XXXXXXXX"
+}
+
 opsforge_make_output_dir() {
   local base="$1"
   local script_name="$2"
@@ -34,14 +43,8 @@ opsforge_make_output_dir() {
     printf '[WARN] output path is not writable; using %s\n' "$base" >&2
     mkdir -p "$base"
   fi
-  local dir="${base%/}/${host}-${script_name}-$(opsforge_timestamp)"
-  local candidate="$dir"
-  local n=1
-  while [ -e "$candidate" ]; do
-    n=$((n + 1))
-    candidate="${dir}-${n}"
-  done
-  dir="$candidate"
+  local dir
+  dir="$(opsforge_make_private_dir "$base" "${host}-${script_name}")"
   opsforge_mkdir "$dir"
   printf '%s\n' "$dir"
 }
