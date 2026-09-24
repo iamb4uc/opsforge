@@ -286,7 +286,7 @@ latest_output_dir() {
   local script_name="$2"
   find "$base" -mindepth 1 -maxdepth 1 -type d -name "*-$script_name-*" -printf '%T@ %p\n' 2>/dev/null |
     sort -n |
-    awk 'END {print $2}'
+    awk 'BEGIN { path="" } { sub(/^[^ ]+ /, ""); path=$0 } END { print path }'
 }
 
 json_escape() {
@@ -304,7 +304,15 @@ profile_add_result() {
   local status="$2"
   local out_dir="$3"
   local contract="$4"
-  PROFILE_RESULTS+=("${label}|${status}|${out_dir}|${contract}")
+  local collection="${5:-not-applicable}"
+  PROFILE_RESULTS+=("${label}|${status}|${out_dir}|${contract}|${collection}")
+}
+
+collection_state() {
+  local out_dir="$1"
+  local status_file="$out_dir/normalized/collection-status.tsv"
+  [ -r "$status_file" ] || { printf 'not-recorded\n'; return; }
+  awk -F '\t' 'NR > 1 { states[$4]=1 } END { for (state in states) print state }' "$status_file" | sort | paste -sd, -
 }
 
 profile_add_skip() {
@@ -366,17 +374,17 @@ run_profile_one() {
   printf '[opsforge] output: %s\n' "$out_dir"
   if ! "$ROOT/bin/validate-output-contract" "$out_dir"; then
     printf '[opsforge] failed: %s output contract failed\n' "$label" >&2
-    profile_add_result "$label" "failed" "$out_dir" "failed"
+    profile_add_result "$label" "failed" "$out_dir" "failed" "$(collection_state "$out_dir")"
     return 1
   fi
 
   if [ "$rc" -ne 0 ]; then
     printf '[opsforge] failed: %s exited with %s\n' "$label" "$rc" >&2
-    profile_add_result "$label" "failed" "$out_dir" "passed"
+    profile_add_result "$label" "failed" "$out_dir" "passed" "$(collection_state "$out_dir")"
     return "$rc"
   fi
 
-  profile_add_result "$label" "passed" "$out_dir" "passed"
+  profile_add_result "$label" "passed" "$out_dir" "passed" "$(collection_state "$out_dir")"
 }
 
 run_profile_doctor() {
@@ -404,7 +412,7 @@ write_profile_summary() {
   local failed="$6"
   local summary_md="$parent_dir/run-summary.md"
   local summary_json="$parent_dir/run-summary.json"
-  local entry first=1 label status out_dir contract skip_reason
+  local entry first=1 label status out_dir contract collection skip_reason
 
   {
     printf '# opsforge linux %s\n\n' "$profile"
@@ -413,11 +421,11 @@ write_profile_summary() {
     printf 'Ended: %s\n\n' "$ended"
     printf 'Failed tools: %s\n\n' "$failed"
     printf '## Tools\n\n'
-    printf '| Tool | Status | Contract | Output |\n'
-    printf '| --- | --- | --- | --- |\n'
+    printf '| Tool | Status | Contract | Collection | Output |\n'
+    printf '| --- | --- | --- | --- | --- |\n'
     for entry in "${PROFILE_RESULTS[@]}"; do
-      IFS='|' read -r label status out_dir contract <<< "$entry"
-      printf '| %s | %s | %s | %s |\n' "$label" "$status" "$contract" "${out_dir:-none}"
+      IFS='|' read -r label status out_dir contract collection <<< "$entry"
+      printf '| %s | %s | %s | %s | %s |\n' "$label" "$status" "$contract" "$collection" "${out_dir:-none}"
     done
     printf '\n## Skipped\n\n'
     if [ "${#PROFILE_SKIPPED[@]}" -eq 0 ]; then
@@ -447,14 +455,15 @@ write_profile_summary() {
     printf '  "tools": [\n'
     first=1
     for entry in "${PROFILE_RESULTS[@]}"; do
-      IFS='|' read -r label status out_dir contract <<< "$entry"
+      IFS='|' read -r label status out_dir contract collection <<< "$entry"
       [ "$first" -eq 1 ] || printf ',\n'
       first=0
-      printf '    {"name":"%s","status":"%s","output":"%s","contract":"%s"}' \
+      printf '    {"name":"%s","status":"%s","output":"%s","contract":"%s","collection":"%s"}' \
         "$(json_escape "$label")" \
         "$(json_escape "$status")" \
         "$(json_escape "$out_dir")" \
-        "$(json_escape "$contract")"
+        "$(json_escape "$contract")" \
+        "$(json_escape "$collection")"
     done
     printf '\n  ],\n'
     printf '  "skipped": [\n'
