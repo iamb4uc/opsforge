@@ -85,7 +85,7 @@ severity_count() {
 
 write_collection_limitations() {
   awk -F '\t' '
-    NR > 1 && $4 != "ok" {
+    NR > 1 && $4 != "collected" {
       printf "- `%s` exited %s. Evidence file: `%s`\n", $1, $3, $2
     }
   ' "$OUT_DIR/normalized/collection-status.tsv" 2>/dev/null || true
@@ -278,7 +278,7 @@ findings_count="$(count_findings "$OUT_DIR/findings.json")"
   printf '%s\n\n' "- Collection mode: read-only"
   printf '## Quick Counts\n\n'
   printf '%s\n' "- Findings: \`$findings_count\`"
-  printf '%s\n' "- Collection commands OK: \`$(count_status ok)\`"
+  printf '%s\n' "- Collection commands collected: \`$(count_status collected)\`"
   printf '%s\n' "- Collection commands failed: \`$(count_status failed)\`"
   printf '%s\n' "- Processes: \`$(count_data_lines "$OUT_DIR/raw/processes.txt")\`"
   printf '%s\n' "- Listening sockets: \`$(count_data_lines "$OUT_DIR/raw/listening-sockets.txt")\`"
@@ -314,7 +314,7 @@ findings_count="$(count_findings "$OUT_DIR/findings.json")"
   printf 'Host: %s\n' "$HOST"
   printf 'Output: %s\n' "$OUT_DIR"
   printf 'Findings: %s\n' "$findings_count"
-  printf 'Collection commands OK: %s\n' "$(count_status ok)"
+  printf 'Collection commands collected: %s\n' "$(count_status collected)"
   printf 'Collection commands failed: %s\n' "$(count_status failed)"
   printf 'Processes: %s\n' "$(count_data_lines "$OUT_DIR/raw/processes.txt")"
   printf 'Listening sockets: %s\n' "$(count_data_lines "$OUT_DIR/raw/listening-sockets.txt")"

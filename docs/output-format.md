@@ -42,6 +42,6 @@ The status file uses these columns:
 command	output_file	exit_code	status	started_at	ended_at
 ```
 
-A failed collection command should not abort the whole script by default. It
-should be recorded as partial collection so the report and raw evidence remain
-usable.
+A collection command should be recorded as `collected`, `unavailable`,
+`denied`, or `failed`. `unavailable`, `denied`, and `failed` are partial
+collection states, not clean results.
