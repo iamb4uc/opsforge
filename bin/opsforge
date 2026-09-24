@@ -496,8 +496,7 @@ run_linux_profile() {
   fi
   host="$(host_slug)"
   [ -n "$host" ] || host="unknown-host"
-  parent_dir="${output_base%/}/opsforge-linux-${profile}-${host}-$(timestamp_compact)"
-  mkdir -p "$parent_dir"
+  parent_dir="$(opsforge_make_private_dir "$output_base" "opsforge-linux-${profile}-${host}")"
   export OPSFORGE_FALLBACK_OUTPUT="$parent_dir"
   make_profile_args "$parent_dir" "$@"
   started="$(timestamp_utc)"

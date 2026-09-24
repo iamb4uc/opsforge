@@ -420,6 +420,15 @@ test_security_regressions() {
   assert_file "$out_dir/evidence.tar.gz"
   [ "$(stat -c '%a' "$out_dir")" = 700 ] || fail "output directory is not private"
   [ "$(stat -c '%a' "$out_dir/findings.json")" = 600 ] || fail "output file is not private"
+  mkdir -p "$run_dir/redirected-output"
+  ln -s "$run_dir/redirected-output" "$run_dir/output-link"
+  if "$ROOT/bin/opsforge" linux persistence --output "$run_dir/output-link" --quiet >/dev/null 2>&1; then
+    fail "collector followed a symlink output base"
+  fi
+  if "$ROOT/bin/opsforge" linux quick --output "$run_dir/output-link" --quiet >/dev/null 2>&1; then
+    fail "profile followed a symlink output base"
+  fi
+  [ -z "$(find "$run_dir/redirected-output" -mindepth 1 -print -quit)" ] || fail "symlink target received output"
   "$ROOT/bin/opsforge" linux quick --output "$output_base" --quiet
   out_dir="$(latest_profile_dir "$output_base" quick)"
   assert_nonempty_file "$out_dir/run-summary.json"
