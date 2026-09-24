@@ -161,7 +161,7 @@ assert_safe_install_paths() {
 }
 
 check_paths() {
-  local app_parent bin_parent
+  local app_parent bin_parent shim
   app_parent="$(dirname "$APP_DIR")"
   bin_parent="$(dirname "$BIN_DIR")"
 
@@ -171,6 +171,12 @@ check_paths() {
   if [ -e "$APP_DIR" ] && [ "$FORCE" != "1" ]; then
     fail "$APP_DIR already exists; use --force to replace it"
   fi
+
+  shim="$BIN_DIR/opsforge"
+  if { [ -e "$shim" ] || [ -L "$shim" ]; } && [ "$FORCE" != "1" ]; then
+    fail "$shim already exists; use --force to replace it"
+  fi
+  [ ! -d "$shim" ] || fail "$shim is a directory and cannot be replaced"
 
   if [ -n "$SOURCE_DIR" ] && [ ! -f "$SOURCE_DIR/bin/opsforge" ]; then
     fail "source does not look like opsforge: $SOURCE_DIR"
@@ -247,6 +253,9 @@ write_shim() {
   local app_dir="$2"
 
   mkdir -p "$(dirname "$shim")"
+  if [ -e "$shim" ] || [ -L "$shim" ]; then
+    rm -f "$shim"
+  fi
   {
     printf '#!/usr/bin/env bash\n'
     printf 'set -Eeuo pipefail\n'
