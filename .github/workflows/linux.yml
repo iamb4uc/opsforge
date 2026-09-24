@@ -47,6 +47,14 @@ jobs:
         shell: bash
         run: ./bin/test installer
 
+      - name: openssh for audit regression
+        shell: bash
+        run: sudo apt-get update && sudo apt-get install -y openssh-server
+
+      - name: security regressions
+        shell: bash
+        run: ./bin/test security-regressions
+
       - name: fixture checks
         shell: bash
         run: ./bin/test linux-fixtures

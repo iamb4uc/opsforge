@@ -20,6 +20,7 @@ Usage:
   bin/test runtime-linux
   bin/test readability
   bin/test installer
+  bin/test security-regressions
   bin/test all
 
 Runs local validation for opsforge. The tests are read-only against the host and
@@ -84,7 +85,7 @@ latest_output_dir() {
   local match="$2"
   find "$base" -mindepth 1 -maxdepth 1 -type d -name "*-$match-*" -printf '%T@ %p\n' |
     sort -n |
-    awk 'END {print $2}'
+    awk 'BEGIN { path="" } { sub(/^[^ ]+ /, ""); path=$0 } END { print path }'
 }
 
 latest_profile_dir() {
@@ -92,7 +93,7 @@ latest_profile_dir() {
   local profile="$2"
   find "$base" -mindepth 1 -maxdepth 1 -type d -name "opsforge-linux-$profile-*" -printf '%T@ %p\n' |
     sort -n |
-    awk 'END {print $2}'
+    awk 'BEGIN { path="" } { sub(/^[^ ]+ /, ""); path=$0 } END { print path }'
 }
 
 assert_output_contract() {
@@ -392,6 +393,79 @@ test_installer() {
   assert_file "$bin_dir/opsforge"
   "$bin_dir/opsforge" --help >/dev/null
   OPSFORGE_DOCTOR_OUTPUT="$run_dir/output" "$bin_dir/opsforge" doctor >/dev/null
+
+  local collision_target collision_bin
+  collision_target="$run_dir/launcher-target"
+  collision_bin="$run_dir/collision-bin"
+  printf 'keep\n' > "$collision_target"
+  mkdir -p "$collision_bin"
+  ln -s "$collision_target" "$collision_bin/opsforge"
+  if "$ROOT/install.sh" --source "$ROOT" --app-dir "$run_dir/opsforge-collision" --bin-dir "$collision_bin" >/dev/null 2>&1; then
+    fail "installer replaced an existing launcher without --force"
+  fi
+  [ "$(cat "$collision_target")" = 'keep' ] || fail "installer followed launcher symlink"
+  "$ROOT/install.sh" --source "$ROOT" --app-dir "$run_dir/opsforge-collision" --bin-dir "$collision_bin" --force >/dev/null
+  [ ! -L "$collision_bin/opsforge" ] || fail "installer did not replace launcher symlink"
+  [ "$(cat "$collision_target")" = 'keep' ] || fail "forced installer changed launcher symlink target"
+}
+
+test_security_regressions() {
+  say "checking security regressions"
+  local run_dir output_base out_dir fixture_root baseline changed_dir fake_bin ssh_dir
+  run_dir="$(make_run_dir security-regressions)"
+  output_base="$run_dir/output with spaces"
+  "$ROOT/bin/opsforge" linux persistence --output "$output_base" --quiet
+  out_dir="$(latest_output_dir "$output_base" linux-persistence-hunter)"
+  [ -n "$out_dir" ] || fail "space-containing output path was not discovered"
+  assert_file "$out_dir/evidence.tar.gz"
+  [ "$(stat -c '%a' "$out_dir")" = 700 ] || fail "output directory is not private"
+  [ "$(stat -c '%a' "$out_dir/findings.json")" = 600 ] || fail "output file is not private"
+  "$ROOT/bin/opsforge" linux quick --output "$output_base" --quiet
+  out_dir="$(latest_profile_dir "$output_base" quick)"
+  assert_nonempty_file "$out_dir/run-summary.json"
+  (
+    cd "$run_dir"
+    "$ROOT/bin/opsforge" linux persistence --output relative-output --quiet
+  )
+  out_dir="$(latest_output_dir "$run_dir/relative-output" linux-persistence-hunter)"
+  assert_file "$out_dir/evidence.tar.gz"
+
+  ssh_dir="$run_dir/ssh"
+  mkdir -p "$ssh_dir/conf.d"
+  ssh-keygen -q -N '' -t ed25519 -f "$ssh_dir/hostkey"
+  printf 'PasswordAuthentication yes\n' > "$ssh_dir/conf.d/hardening.conf"
+  printf 'HostKey %s/hostkey\nInclude %s/conf.d/*.conf\nPasswordAuthentication no\nMatch User test\nPasswordAuthentication no\n' "$ssh_dir" "$ssh_dir" > "$ssh_dir/sshd_config"
+  "$ROOT/scripts/linux/hardening/ssh-hardening-audit.sh" --config "$ssh_dir/sshd_config" --output "$run_dir" --quiet
+  out_dir="$(latest_output_dir "$run_dir" ssh-hardening-audit)"
+  assert_text "$out_dir/findings.json" 'LINUX-SSH-PasswordAuthentication'
+  assert_text "$out_dir/report.md" 'Match blocks are evaluated only'
+
+  fixture_root="$run_dir/privileged"
+  mkdir -p "$fixture_root"
+  cp /bin/true "$fixture_root/tool"
+  chmod 4755 "$fixture_root/tool"
+  baseline="$run_dir/suid-baseline.tsv"
+  OPSFORGE_SUID_SCAN_ROOT="$fixture_root" "$ROOT/scripts/linux/hardening/suid-drift-monitor.sh" --baseline --baseline-file "$baseline" --output "$run_dir" --quiet
+  cp /bin/false "$fixture_root/tool"
+  chmod 4755 "$fixture_root/tool"
+  OPSFORGE_SUID_SCAN_ROOT="$fixture_root" "$ROOT/scripts/linux/hardening/suid-drift-monitor.sh" --check --baseline-file "$baseline" --output "$run_dir" --quiet
+  changed_dir="$(latest_output_dir "$run_dir" suid-drift-monitor)"
+  assert_text "$changed_dir/findings.json" 'LINUX-SUID-CHANGED'
+  if grep -F 'LINUX-SUID-WW-' "$changed_dir/findings.json" >/dev/null; then
+    fail "ordinary 4755 file was reported as world-writable"
+  fi
+
+  fake_bin="$run_dir/fake-bin"
+  mkdir -p "$fake_bin"
+  printf '#!/usr/bin/env bash\nprintf "table inet filter { chain input { tcp dport 22 drop } }\\n"\n' > "$fake_bin/nft"
+  chmod 755 "$fake_bin/nft"
+  PATH="$fake_bin:$PATH" "$ROOT/scripts/linux/network/firewall-rule-analyzer.sh" --output "$run_dir" --quiet
+  out_dir="$(latest_output_dir "$run_dir" firewall-rule-analyzer)"
+  if grep -F 'LINUX-FW-ADMIN-PORTS' "$out_dir/findings.json" >/dev/null; then
+    fail "drop rule was reported as an allowed administrative port"
+  fi
+  assert_text "$out_dir/normalized/collection-status.tsv" 'unavailable'
+  assert_text "$out_dir/report.md" '## Collection Status'
 }
 
 test_linux_fixtures() {
@@ -562,6 +636,7 @@ case "${1:-}" in
   script-catalog) test_script_catalog ;;
   output-contract) test_output_contract ;;
   installer) test_installer ;;
+  security-regressions) test_security_regressions ;;
   linux-fixtures) test_linux_fixtures ;;
   linux-feasibility) test_linux_feasibility ;;
   runtime-linux) test_runtime_linux ;;
@@ -575,6 +650,7 @@ case "${1:-}" in
     test_script_catalog
     test_output_contract
     test_installer
+    test_security_regressions
     test_linux_fixtures
     test_linux_feasibility
     test_runtime_linux

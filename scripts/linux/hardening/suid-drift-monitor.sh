@@ -12,6 +12,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 OUTPUT_BASE="$REPO_ROOT/output"
 MODE=""
 BASELINE=""
+SUID_ROOT="${OPSFORGE_SUID_SCAN_ROOT:-/}"
 
 usage() {
   cat <<'USAGE'
@@ -52,7 +53,7 @@ TMP_FINDINGS="$OUT_DIR/normalized/findings.tmp"
 CURRENT="$OUT_DIR/raw/current-suid-sgid.tsv"
 : > "$TMP_FINDINGS"
 
-{ find / -xdev \( -perm -4000 -o -perm -2000 \) -type f -printf '%m\t%u\t%g\t%s\t%TY-%Tm-%Td %TH:%TM\t%p\n' 2>/dev/null || true; } |
+{ find "$SUID_ROOT" -xdev \( -perm -4000 -o -perm -2000 \) -type f -printf '%m\t%u\t%g\t%s\t%TY-%Tm-%Td %TH:%TM\t%p\n' 2>/dev/null || true; } |
   while IFS= read -r line; do
     path="${line##*	}"
     hash="$(sha256sum "$path" 2>/dev/null | awk '{print $1}' || printf 'unreadable')"
@@ -68,6 +69,7 @@ else
   cut -f6 "$BASELINE" | sort > "$OUT_DIR/normalized/baseline.paths"
   comm -13 "$OUT_DIR/normalized/baseline.paths" "$OUT_DIR/normalized/current.paths" > "$OUT_DIR/raw/new-privileged-files.txt"
   comm -23 "$OUT_DIR/normalized/baseline.paths" "$OUT_DIR/normalized/current.paths" > "$OUT_DIR/raw/removed-privileged-files.txt"
+  awk -F '\t' 'NR == FNR { hash[$6]=$7; next } ($6 in hash) && hash[$6] != $7 { print $0 }' "$BASELINE" "$CURRENT" > "$OUT_DIR/raw/changed-privileged-files.txt"
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     severity="medium"
@@ -83,7 +85,14 @@ else
       "$title" "$severity" "$HOST" "hardening" "$path" \
       "$recommendation"
   done < "$OUT_DIR/raw/new-privileged-files.txt"
-  awk -F '\t' '$1 ~ /7..|.7.|..7/ {print}' "$CURRENT" > "$OUT_DIR/raw/world-writable-privileged-files.txt"
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    path="$(printf '%s' "$line" | awk -F '\t' '{print $6}')"
+    write_finding_json "$TMP_FINDINGS" "LINUX-SUID-CHANGED-$(printf '%s' "$path" | cksum | awk '{print $1}')" \
+      "Privileged file content changed" "high" "$HOST" "hardening" "$line" \
+      "Investigate the changed hash and validate package ownership or approved maintenance."
+  done < "$OUT_DIR/raw/changed-privileged-files.txt"
+  awk -F '\t' '{ mode=$1; perms=substr(mode, length(mode) - 2); if (substr(perms, 2, 1) ~ /[2367]/ || substr(perms, 3, 1) ~ /[2367]/) print }' "$CURRENT" > "$OUT_DIR/raw/world-writable-privileged-files.txt"
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     severity="critical"
