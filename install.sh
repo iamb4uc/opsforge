@@ -251,18 +251,18 @@ copy_tree() {
 write_shim() {
   local shim="$1"
   local app_dir="$2"
+  local shim_tmp
 
   mkdir -p "$(dirname "$shim")"
-  if [ -e "$shim" ] || [ -L "$shim" ]; then
-    rm -f "$shim"
-  fi
+  shim_tmp="$(mktemp "$(dirname "$shim")/.opsforge.XXXXXXXX")"
   {
     printf '#!/usr/bin/env bash\n'
     printf 'set -Eeuo pipefail\n'
     printf 'export OPSFORGE_HOME=%q\n' "$app_dir"
     printf 'exec "$OPSFORGE_HOME/bin/opsforge" "$@"\n'
-  } > "$shim"
-  chmod 755 "$shim"
+  } > "$shim_tmp"
+  chmod 755 "$shim_tmp"
+  mv -fT "$shim_tmp" "$shim"
 }
 
 install_opsforge() {
