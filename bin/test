@@ -499,6 +499,20 @@ test_security_regressions() {
   out_dir="$(latest_output_dir "$run_dir" firewall-rule-analyzer)"
   assert_text "$out_dir/findings.json" 'LINUX-FW-ADMIN-PORTS'
   assert_text "$out_dir/findings.json" 'LINUX-FW-OPEN-ADMIN'
+  printf '#!/usr/bin/env bash\nprintf "table inet filter { chain input { tcp dport 22 accept } }\\n"\n' > "$fake_bin/nft"
+  PATH="$fake_bin:$PATH" "$ROOT/scripts/linux/network/firewall-rule-analyzer.sh" --output "$run_dir" --quiet
+  out_dir="$(latest_output_dir "$run_dir" firewall-rule-analyzer)"
+  assert_text "$out_dir/findings.json" 'LINUX-FW-OPEN-ADMIN'
+  printf '#!/usr/bin/env bash\nprintf "table inet filter { chain input { ip6 saddr ::/0 tcp dport 22 accept } }\\n"\n' > "$fake_bin/nft"
+  PATH="$fake_bin:$PATH" "$ROOT/scripts/linux/network/firewall-rule-analyzer.sh" --output "$run_dir" --quiet
+  out_dir="$(latest_output_dir "$run_dir" firewall-rule-analyzer)"
+  assert_text "$out_dir/findings.json" 'LINUX-FW-OPEN-ADMIN'
+  printf '#!/usr/bin/env bash\nprintf "table inet filter { chain input { ip saddr 10.0.0.0/8 tcp dport 22 accept } }\\n"\n' > "$fake_bin/nft"
+  PATH="$fake_bin:$PATH" "$ROOT/scripts/linux/network/firewall-rule-analyzer.sh" --output "$run_dir" --quiet
+  out_dir="$(latest_output_dir "$run_dir" firewall-rule-analyzer)"
+  if grep -F 'LINUX-FW-OPEN-ADMIN' "$out_dir/findings.json" >/dev/null; then
+    fail "source-restricted nft rule was reported as broad access"
+  fi
   assert_text "$out_dir/normalized/collection-status.tsv" 'unavailable'
   assert_text "$out_dir/report.md" '## Collection Status'
   printf '#!/usr/bin/env bash\nprintf "table inet filter { chain input { tcp dport 22 drop } }\\n"\n' > "$fake_bin/nft"
