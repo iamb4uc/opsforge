@@ -75,6 +75,8 @@ if grep -Eiq '(^|[[:space:]])(ACCEPT|allow)([[:space:]]|$).*(dpt:22|dport[[:spac
   awk '{
     line=tolower($0)
     if (line ~ /dport[[:space:]]+22/ && line ~ /(^|[[:space:]])accept([[:space:]]|$)/ &&
+        (line !~ /ct state/ || line ~ /ct state[^;{}]*new/ ||
+         line !~ /ct state[^;{}]*(established|related)/) &&
         (line !~ /saddr/ || line ~ /saddr[[:space:]]+(0\.0\.0\.0\/0|::\/0)/)) found=1
   } END {exit found ? 0 : 1}' "$OUT_DIR/raw/firewall-all.txt"; then
   write_finding_json "$TMP_FINDINGS" "LINUX-FW-OPEN-ADMIN" "Firewall may expose administrative services broadly" "high" "$HOST" "network" "raw/firewall-all.txt" "Restrict SSH, RDP, WinRM, and management ports to trusted source ranges."
