@@ -37,9 +37,19 @@ opsforge_assert_no_symlink_path() {
 }
 
 opsforge_make_private_dir() {
-  local base="$1" prefix="$2" base_fd created dir
+  local base="$1" prefix="$2" base_fd expected_dir actual_dir created dir
+  expected_dir="$(stat -Lc '%d:%i' "$base")" || return 1
   opsforge_assert_no_symlink_path "$base" || return 1
   exec {base_fd}<"$base" || return 1
+  actual_dir="$(stat -Lc '%d:%i' "/proc/self/fd/$base_fd")" || {
+    exec {base_fd}<&-
+    return 1
+  }
+  if [ "$actual_dir" != "$expected_dir" ]; then
+    printf '[ERROR] output base changed while opening: %s\n' "$base" >&2
+    exec {base_fd}<&-
+    return 1
+  fi
   created="$(mktemp -d "/proc/self/fd/$base_fd/${prefix}-$(opsforge_timestamp).XXXXXXXX")" || {
     exec {base_fd}<&-
     return 1
