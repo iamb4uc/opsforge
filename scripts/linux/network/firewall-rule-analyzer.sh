@@ -71,7 +71,7 @@ collect_firewall ufw "$OUT_DIR/raw/ufw.txt" status verbose
 collect_firewall firewall-cmd "$OUT_DIR/raw/firewalld.txt" --list-all-zones
 cat "$OUT_DIR/raw/"*.txt > "$OUT_DIR/raw/firewall-all.txt"
 
-grep -Eiq '(^|[[:space:]])(ACCEPT|allow)([[:space:]]|$).*(dpt:22|dport[[:space:]]+22|22/tcp).*(0\.0\.0\.0/0|anywhere)|(^|[[:space:]])(ACCEPT|allow).*(0\.0\.0\.0/0|anywhere).*(dpt:22|dport[[:space:]]+22|22/tcp)|22/tcp[[:space:]]+ALLOW[[:space:]]+IN[[:space:]]+Anywhere' "$OUT_DIR/raw/firewall-all.txt" &&
+grep -Eiq '(^|[[:space:]])(ACCEPT|allow)([[:space:]]|$).*(dpt:22|dport[[:space:]]+22|22/tcp).*(0\.0\.0\.0/0|anywhere)|(^|[[:space:]])(ACCEPT|allow).*(0\.0\.0\.0/0|anywhere).*(dpt:22|dport[[:space:]]+22|22/tcp)|22/tcp[[:space:]]+ALLOW[[:space:]]+IN[[:space:]]+Anywhere|0\.0\.0\.0/0.*dport[[:space:]]+22.*([[:space:]]|^)(accept|allow)([[:space:]]|$)' "$OUT_DIR/raw/firewall-all.txt" &&
   write_finding_json "$TMP_FINDINGS" "LINUX-FW-OPEN-ADMIN" "Firewall may expose administrative services broadly" "high" "$HOST" "network" "raw/firewall-all.txt" "Restrict SSH, RDP, WinRM, and management ports to trusted source ranges."
 
 grep -Eiq '(^|[[:space:]])(ACCEPT|allow)([[:space:]]|$).*(dpt:(22|3389|5985|5986|9200|5601|2375)|dport[[:space:]]+(22|3389|5985|5986|9200|5601|2375)|((22|3389|5985|5986|9200|5601|2375)/tcp))|dport[[:space:]]+(22|3389|5985|5986|9200|5601|2375).*([[:space:]]|^)(accept|allow)([[:space:]]|$)|((22|3389|5985|5986|9200|5601|2375)/tcp)[[:space:]]+ALLOW|services:.*(^|[[:space:]])ssh([[:space:]]|$)|ports:.*(22|3389|5985|5986|9200|5601|2375)/tcp' "$OUT_DIR/raw/firewall-all.txt" &&
