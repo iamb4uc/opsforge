@@ -489,6 +489,7 @@ run_linux_profile() {
   PROFILE_SKIPPED=()
 
   output_base="$(parse_output_arg "$@")"
+  opsforge_assert_no_symlink_path "$output_base" || return 1
   if ! mkdir -p "$output_base" 2>/dev/null || [ ! -w "$output_base" ]; then
     output_base="${OPSFORGE_FALLBACK_OUTPUT:-$ROOT/.ci-artifacts/runtime-output}"
     printf '[opsforge] output path is not writable; using %s\n' "$output_base" >&2
