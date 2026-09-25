@@ -24,13 +24,29 @@ opsforge_mkdir() {
   chmod 700 "$1" "$1/raw" "$1/normalized"
 }
 
+opsforge_assert_no_symlink_path() {
+  local path="$1"
+  while [ "$path" != / ] && [ "$path" != . ]; do
+    case "$path" in */) path="${path%/}"; continue ;; esac
+    if [ -L "$path" ]; then
+      printf '[ERROR] output path contains a symlink: %s\n' "$path" >&2
+      return 1
+    fi
+    path="$(dirname "$path")"
+  done
+}
+
 opsforge_make_private_dir() {
-  local base="$1" prefix="$2"
-  if [ -L "$base" ]; then
-    printf '[ERROR] output base is a symlink: %s\n' "$base" >&2
+  local base="$1" prefix="$2" base_fd created dir
+  opsforge_assert_no_symlink_path "$base" || return 1
+  exec {base_fd}<"$base" || return 1
+  created="$(mktemp -d "/proc/self/fd/$base_fd/${prefix}-$(opsforge_timestamp).XXXXXXXX")" || {
+    exec {base_fd}<&-
     return 1
-  fi
-  mktemp -d "${base%/}/${prefix}-$(opsforge_timestamp).XXXXXXXX"
+  }
+  dir="$(cd "$created" && pwd -P)"
+  exec {base_fd}<&-
+  printf '%s\n' "$dir"
 }
 
 opsforge_make_output_dir() {
@@ -38,6 +54,7 @@ opsforge_make_output_dir() {
   local script_name="$2"
   local host
   host="$(opsforge_hostname | tr ' /' '__')"
+  opsforge_assert_no_symlink_path "$base" || return 1
   if ! mkdir -p "$base" 2>/dev/null || [ ! -w "$base" ]; then
     base="${OPSFORGE_FALLBACK_OUTPUT:-$(opsforge_repo_root)/.ci-artifacts/runtime-output}"
     printf '[WARN] output path is not writable; using %s\n' "$base" >&2
