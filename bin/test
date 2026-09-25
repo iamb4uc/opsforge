@@ -354,6 +354,12 @@ test_output_contract() {
   if PATH="$shell_tools" "$ROOT/bin/validate-output-contract" "$run_dir/bad-escape" >/dev/null 2>&1; then
     fail "shell-only output validator accepted an invalid JSON escape"
   fi
+  cp -R "$ROOT/tests/fixtures/output-contract-valid" "$run_dir/raw-control"
+  printf '[{"id":"FIXTURE-001","title":"bad\nvalue","severity":"medium","host":"server01","category":"fixture","evidence":"raw/example.txt","recommendation":"review"}]\n' > "$run_dir/raw-control/findings.json"
+  cp "$run_dir/raw-control/findings.json" "$run_dir/raw-control/normalized/findings.json"
+  if PATH="$shell_tools" "$ROOT/bin/validate-output-contract" "$run_dir/raw-control" >/dev/null 2>&1; then
+    fail "shell-only output validator accepted a literal control character"
+  fi
   local escaped
   escaped="$(source "$ROOT/lib/common.sh"; json_escape $'a\001b')"
   [ "$escaped" = 'a\u0001b' ] || fail "json escaping left a control character unescaped"
