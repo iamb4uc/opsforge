@@ -16,33 +16,13 @@ jobs:
       - name: checkout
         uses: actions/checkout@v4
 
-      - name: syntax
+      - name: openssh for audit regression
         shell: bash
-        run: ./bin/test syntax
+        run: sudo apt-get update && sudo apt-get install -y openssh-server
 
-      - name: help
+      - name: full linux validation
         shell: bash
-        run: ./bin/test help
-
-      - name: wrapper targets
-        shell: bash
-        run: ./bin/test wrapper-targets
-
-      - name: forbidden files
-        shell: bash
-        run: ./bin/test forbidden-files
-
-      - name: readability
-        shell: bash
-        run: ./bin/test readability
-
-      - name: output contract
-        shell: bash
-        run: ./bin/test output-contract
-
-      - name: installer
-        shell: bash
-        run: ./bin/test installer
+        run: ./bin/test all
 
   windows-checks:
     name: windows checks
@@ -51,17 +31,22 @@ jobs:
       - name: checkout
         uses: actions/checkout@v4
 
-      - name: parser
-        shell: pwsh
-        run: .\bin\test.ps1 parser
+      - name: full validation in Windows PowerShell
+        shell: powershell
+        run: .\bin\test.ps1 all
 
-      - name: wrapper targets
+      - name: full validation in PowerShell
         shell: pwsh
-        run: .\bin\test.ps1 wrapper-targets
+        run: .\bin\test.ps1 all
 
-      - name: static checks
-        shell: pwsh
-        run: .\bin\test.ps1 static
+      - name: pester
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module Pester -MinimumVersion 5.0.0 -Force -Scope CurrentUser
+          $result = Invoke-Pester -Path .\tests\pester -PassThru
+          if ($result.FailedCount -ne 0) { throw "Pester failures: $($result.FailedCount)" }
 
   release:
     name: create release
