@@ -437,6 +437,12 @@ test_security_regressions() {
     fail "profile followed a symlink output base"
   fi
   [ -z "$(find "$run_dir/redirected-output" -mindepth 1 -print -quit)" ] || fail "symlink target received output"
+  mkdir -p "$run_dir/shared-output"
+  chmod 777 "$run_dir/shared-output"
+  if "$ROOT/bin/opsforge" linux persistence --output "$run_dir/shared-output" --quiet >/dev/null 2>&1; then
+    fail "collector accepted an unsafe output base"
+  fi
+  chmod 700 "$run_dir/shared-output"
   "$ROOT/bin/opsforge" linux quick --output "$output_base" --quiet
   out_dir="$(latest_profile_dir "$output_base" quick)"
   assert_nonempty_file "$out_dir/run-summary.json"

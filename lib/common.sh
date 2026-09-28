@@ -25,11 +25,26 @@ opsforge_mkdir() {
 }
 
 opsforge_assert_no_symlink_path() {
-  local path="$1"
+  local path="$1" require_existing="${2:-false}" info owner mode
+  case "$path" in /*) ;; *) path="$(pwd -P)/$path" ;; esac
   while [ "$path" != / ] && [ "$path" != . ]; do
     case "$path" in */) path="${path%/}"; continue ;; esac
     if [ -L "$path" ]; then
       printf '[ERROR] output path contains a symlink: %s\n' "$path" >&2
+      return 1
+    fi
+    if [ -e "$path" ]; then
+      info="$(stat -Lc '%u:%f' "$path")" || return 1
+      owner="${info%%:*}"
+      mode="${info#*:}"
+      if [ "$owner" != "$(id -u)" ] && [ "$owner" != 0 ] ||
+        { (( (16#$mode & 0x12) != 0 )) &&
+          { [ "$owner" != 0 ] || (( (16#$mode & 0x200) == 0 )); }; }; then
+        printf '[ERROR] output path is writable by another user: %s\n' "$path" >&2
+        return 1
+      fi
+    elif [ "$require_existing" = true ]; then
+      printf '[ERROR] output path disappeared: %s\n' "$path" >&2
       return 1
     fi
     path="$(dirname "$path")"
@@ -39,7 +54,7 @@ opsforge_assert_no_symlink_path() {
 opsforge_make_private_dir() {
   local base="$1" prefix="$2" base_fd expected_dir actual_dir created dir
   exec {base_fd}<"$base" || return 1
-  if ! opsforge_assert_no_symlink_path "$base"; then
+  if ! opsforge_assert_no_symlink_path "$base" true; then
     exec {base_fd}<&-
     return 1
   fi
