@@ -144,6 +144,7 @@ jobs:
           mkdir -p /repo/.ci-artifacts
           if [ -d /tmp/opsforge-ci-artifacts ]; then
             cp -a /tmp/opsforge-ci-artifacts/. /repo/.ci-artifacts/
+            chown -R "$(stat -c '%u:%g' /repo)" /repo/.ci-artifacts
           fi
           exit "${result:-0}"
           CONTAINER
