@@ -139,8 +139,13 @@ jobs:
           fi
 
           OPSFORGE_EXPECT_INIT="${{ matrix.init }}" \
-            OPSFORGE_TEST_OUTPUT=/repo/.ci-artifacts \
-            bash ./bin/test linux-feasibility
+            OPSFORGE_TEST_OUTPUT=/tmp/opsforge-ci-artifacts \
+            bash ./bin/test linux-feasibility || result=$?
+          mkdir -p /repo/.ci-artifacts
+          if [ -d /tmp/opsforge-ci-artifacts ]; then
+            cp -a /tmp/opsforge-ci-artifacts/. /repo/.ci-artifacts/
+          fi
+          exit "${result:-0}"
           CONTAINER
 
       - name: upload feasibility artifacts
