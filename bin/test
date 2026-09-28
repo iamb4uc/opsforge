@@ -20,6 +20,7 @@ Usage:
   bin/test runtime-linux
   bin/test readability
   bin/test installer
+  bin/test security-regressions
   bin/test all
 
 Runs local validation for opsforge. The tests are read-only against the host and
@@ -84,7 +85,7 @@ latest_output_dir() {
   local match="$2"
   find "$base" -mindepth 1 -maxdepth 1 -type d -name "*-$match-*" -printf '%T@ %p\n' |
     sort -n |
-    awk 'END {print $2}'
+    awk 'BEGIN { path="" } { sub(/^[^ ]+ /, ""); path=$0 } END { print path }'
 }
 
 latest_profile_dir() {
@@ -92,7 +93,7 @@ latest_profile_dir() {
   local profile="$2"
   find "$base" -mindepth 1 -maxdepth 1 -type d -name "opsforge-linux-$profile-*" -printf '%T@ %p\n' |
     sort -n |
-    awk 'END {print $2}'
+    awk 'BEGIN { path="" } { sub(/^[^ ]+ /, ""); path=$0 } END { print path }'
 }
 
 assert_output_contract() {
@@ -199,6 +200,8 @@ test_help() {
     "$file" --help >/dev/null
   done < <(find "$ROOT/scripts/linux" -type f -name '*.sh' | sort)
   "$ROOT/bin/opsforge" --help >/dev/null
+  "$ROOT/bin/opsforge" linux --help >/dev/null
+  "$ROOT/bin/opsforge" linux quick --help >/dev/null
   "$ROOT/bin/test" --help >/dev/null
   "$ROOT/bin/validate-output-contract" --help >/dev/null
   "$ROOT/install.sh" --help >/dev/null
@@ -318,6 +321,48 @@ test_script_catalog() {
 test_output_contract() {
   say "checking output contract fixture"
   "$ROOT/bin/validate-output-contract" "$ROOT/tests/fixtures/output-contract-valid" >/dev/null
+  local run_dir invalid shell_tools tool
+  run_dir="$(make_run_dir output-contract)"
+  shell_tools="$run_dir/shell-tools"
+  mkdir -p "$shell_tools"
+  for tool in bash tr grep awk wc cmp; do
+    ln -s "$(command -v "$tool")" "$shell_tools/$tool"
+  done
+  invalid="$run_dir/invalid"
+  cp -R "$ROOT/tests/fixtures/output-contract-valid" "$invalid"
+  printf '[not json]\n' > "$invalid/findings.json"
+  cp "$invalid/findings.json" "$invalid/normalized/findings.json"
+  if "$ROOT/bin/validate-output-contract" "$invalid" >/dev/null 2>&1; then
+    fail "output validator accepted invalid JSON"
+  fi
+  if PATH="$shell_tools" "$ROOT/bin/validate-output-contract" "$invalid" >/dev/null 2>&1; then
+    fail "shell-only output validator accepted invalid JSON"
+  fi
+  PATH="$shell_tools" "$ROOT/bin/validate-output-contract" "$ROOT/tests/fixtures/output-contract-valid" >/dev/null
+  cp -R "$ROOT/tests/fixtures/output-contract-valid" "$run_dir/wrong-types"
+  sed -i 's/"id":"FIXTURE-001"/"id":1/' "$run_dir/wrong-types/findings.json"
+  cp "$run_dir/wrong-types/findings.json" "$run_dir/wrong-types/normalized/findings.json"
+  if "$ROOT/bin/validate-output-contract" "$run_dir/wrong-types" >/dev/null 2>&1; then
+    fail "output validator accepted wrong field types"
+  fi
+  if PATH="$shell_tools" "$ROOT/bin/validate-output-contract" "$run_dir/wrong-types" >/dev/null 2>&1; then
+    fail "shell-only output validator accepted wrong field types"
+  fi
+  cp -R "$ROOT/tests/fixtures/output-contract-valid" "$run_dir/bad-escape"
+  sed -i 's/FIXTURE-001/FIXTURE-\\q/' "$run_dir/bad-escape/findings.json"
+  cp "$run_dir/bad-escape/findings.json" "$run_dir/bad-escape/normalized/findings.json"
+  if PATH="$shell_tools" "$ROOT/bin/validate-output-contract" "$run_dir/bad-escape" >/dev/null 2>&1; then
+    fail "shell-only output validator accepted an invalid JSON escape"
+  fi
+  cp -R "$ROOT/tests/fixtures/output-contract-valid" "$run_dir/raw-control"
+  printf '[{"id":"FIXTURE-001","title":"bad\nvalue","severity":"medium","host":"server01","category":"fixture","evidence":"raw/example.txt","recommendation":"review"}]\n' > "$run_dir/raw-control/findings.json"
+  cp "$run_dir/raw-control/findings.json" "$run_dir/raw-control/normalized/findings.json"
+  if PATH="$shell_tools" "$ROOT/bin/validate-output-contract" "$run_dir/raw-control" >/dev/null 2>&1; then
+    fail "shell-only output validator accepted a literal control character"
+  fi
+  local escaped
+  escaped="$(source "$ROOT/lib/common.sh"; json_escape $'a\001b')"
+  [ "$escaped" = 'a\u0001b' ] || fail "json escaping left a control character unescaped"
 }
 
 test_installer() {
@@ -356,6 +401,144 @@ test_installer() {
   assert_file "$bin_dir/opsforge"
   "$bin_dir/opsforge" --help >/dev/null
   OPSFORGE_DOCTOR_OUTPUT="$run_dir/output" "$bin_dir/opsforge" doctor >/dev/null
+
+  local collision_target collision_bin
+  collision_target="$run_dir/launcher-target"
+  collision_bin="$run_dir/collision-bin"
+  printf 'keep\n' > "$collision_target"
+  mkdir -p "$collision_bin"
+  ln -s "$collision_target" "$collision_bin/opsforge"
+  if "$ROOT/install.sh" --source "$ROOT" --app-dir "$run_dir/opsforge-collision" --bin-dir "$collision_bin" >/dev/null 2>&1; then
+    fail "installer replaced an existing launcher without --force"
+  fi
+  [ "$(cat "$collision_target")" = 'keep' ] || fail "installer followed launcher symlink"
+  "$ROOT/install.sh" --source "$ROOT" --app-dir "$run_dir/opsforge-collision" --bin-dir "$collision_bin" --force >/dev/null
+  [ ! -L "$collision_bin/opsforge" ] || fail "installer did not replace launcher symlink"
+  [ "$(cat "$collision_target")" = 'keep' ] || fail "forced installer changed launcher symlink target"
+}
+
+test_security_regressions() {
+  say "checking security regressions"
+  local run_dir output_base out_dir fixture_root baseline changed_dir fake_bin ssh_dir
+  run_dir="$(make_run_dir security-regressions)"
+  output_base="$run_dir/output with spaces"
+  "$ROOT/bin/opsforge" linux persistence --output "$output_base" --quiet
+  out_dir="$(latest_output_dir "$output_base" linux-persistence-hunter)"
+  [ -n "$out_dir" ] || fail "space-containing output path was not discovered"
+  assert_file "$out_dir/evidence.tar.gz"
+  [ "$(stat -c '%a' "$out_dir")" = 700 ] || fail "output directory is not private"
+  [ "$(stat -c '%a' "$out_dir/findings.json")" = 600 ] || fail "output file is not private"
+  mkdir -p "$run_dir/redirected-output"
+  ln -s "$run_dir/redirected-output" "$run_dir/output-link"
+  if "$ROOT/bin/opsforge" linux persistence --output "$run_dir/output-link" --quiet >/dev/null 2>&1; then
+    fail "collector followed a symlink output base"
+  fi
+  if "$ROOT/bin/opsforge" linux quick --output "$run_dir/output-link" --quiet >/dev/null 2>&1; then
+    fail "profile followed a symlink output base"
+  fi
+  [ -z "$(find "$run_dir/redirected-output" -mindepth 1 -print -quit)" ] || fail "symlink target received output"
+  mkdir -p "$run_dir/shared-output"
+  chmod 777 "$run_dir/shared-output"
+  if "$ROOT/bin/opsforge" linux persistence --output "$run_dir/shared-output" --quiet >/dev/null 2>&1; then
+    fail "collector accepted an unsafe output base"
+  fi
+  chmod 700 "$run_dir/shared-output"
+  "$ROOT/bin/opsforge" linux quick --output "$output_base" --quiet
+  out_dir="$(latest_profile_dir "$output_base" quick)"
+  assert_nonempty_file "$out_dir/run-summary.json"
+  (
+    cd "$run_dir"
+    "$ROOT/bin/opsforge" linux persistence --output relative-output --quiet
+  )
+  out_dir="$(latest_output_dir "$run_dir/relative-output" linux-persistence-hunter)"
+  assert_file "$out_dir/evidence.tar.gz"
+
+  ssh_dir="$run_dir/ssh"
+  mkdir -p "$ssh_dir/conf.d"
+  ssh-keygen -q -N '' -t ed25519 -f "$ssh_dir/hostkey"
+  printf 'PasswordAuthentication yes\n' > "$ssh_dir/conf.d/hardening.conf"
+  printf 'HostKey %s/hostkey\nInclude %s/conf.d/*.conf\nPasswordAuthentication no\nMatch User test\nPasswordAuthentication no\n' "$ssh_dir" "$ssh_dir" > "$ssh_dir/sshd_config"
+  "$ROOT/scripts/linux/hardening/ssh-hardening-audit.sh" --config "$ssh_dir/sshd_config" --output "$run_dir" --quiet
+  out_dir="$(latest_output_dir "$run_dir" ssh-hardening-audit)"
+  assert_text "$out_dir/findings.json" 'LINUX-SSH-PasswordAuthentication'
+  assert_text "$out_dir/report.md" 'Match blocks are evaluated only'
+  if grep -F 'LINUX-SSH-WEAK-CRYPTO' "$out_dir/findings.json" >/dev/null; then
+    fail "default SSH algorithms were reported as weak"
+  fi
+
+  fixture_root="$run_dir/privileged"
+  mkdir -p "$fixture_root"
+  cp /bin/true "$fixture_root/tool"
+  chmod 4755 "$fixture_root/tool"
+  baseline="$run_dir/suid-baseline.tsv"
+  OPSFORGE_SUID_SCAN_ROOT="$fixture_root" "$ROOT/scripts/linux/hardening/suid-drift-monitor.sh" --baseline --baseline-file "$baseline" --output "$run_dir" --quiet
+  cp /bin/false "$fixture_root/tool"
+  chmod 4755 "$fixture_root/tool"
+  OPSFORGE_SUID_SCAN_ROOT="$fixture_root" "$ROOT/scripts/linux/hardening/suid-drift-monitor.sh" --check --baseline-file "$baseline" --output "$run_dir" --quiet
+  changed_dir="$(latest_output_dir "$run_dir" suid-drift-monitor)"
+  assert_text "$changed_dir/findings.json" 'LINUX-SUID-CHANGED'
+  if grep -F 'LINUX-SUID-WW-' "$changed_dir/findings.json" >/dev/null; then
+    fail "ordinary 4755 file was reported as world-writable"
+  fi
+  chmod 4775 "$fixture_root/tool"
+  OPSFORGE_SUID_SCAN_ROOT="$fixture_root" "$ROOT/scripts/linux/hardening/suid-drift-monitor.sh" --check --baseline-file "$baseline" --output "$run_dir" --quiet
+  changed_dir="$(latest_output_dir "$run_dir" suid-drift-monitor)"
+  if grep -F 'LINUX-SUID-WW-' "$changed_dir/findings.json" >/dev/null; then
+    fail "group-writable 4775 file was reported as world-writable"
+  fi
+  chmod 4777 "$fixture_root/tool"
+  OPSFORGE_SUID_SCAN_ROOT="$fixture_root" "$ROOT/scripts/linux/hardening/suid-drift-monitor.sh" --check --baseline-file "$baseline" --output "$run_dir" --quiet
+  changed_dir="$(latest_output_dir "$run_dir" suid-drift-monitor)"
+  assert_text "$changed_dir/findings.json" 'LINUX-SUID-WW-'
+
+  fake_bin="$run_dir/fake-bin"
+  mkdir -p "$fake_bin"
+  printf '#!/usr/bin/env bash\nprintf "table inet filter { chain input { tcp dport 22 drop } }\\n"\n' > "$fake_bin/nft"
+  chmod 755 "$fake_bin/nft"
+  PATH="$fake_bin:$PATH" "$ROOT/scripts/linux/network/firewall-rule-analyzer.sh" --output "$run_dir" --quiet
+  out_dir="$(latest_output_dir "$run_dir" firewall-rule-analyzer)"
+  if grep -F 'LINUX-FW-ADMIN-PORTS' "$out_dir/findings.json" >/dev/null; then
+    fail "drop rule was reported as an allowed administrative port"
+  fi
+  printf '#!/usr/bin/env bash\nprintf "table inet filter { chain input { ip saddr 0.0.0.0/0 tcp dport 22 accept } }\\n"\n' > "$fake_bin/nft"
+  PATH="$fake_bin:$PATH" "$ROOT/scripts/linux/network/firewall-rule-analyzer.sh" --output "$run_dir" --quiet
+  out_dir="$(latest_output_dir "$run_dir" firewall-rule-analyzer)"
+  assert_text "$out_dir/findings.json" 'LINUX-FW-ADMIN-PORTS'
+  assert_text "$out_dir/findings.json" 'LINUX-FW-OPEN-ADMIN'
+  printf '#!/usr/bin/env bash\nprintf "table inet filter { chain input { tcp dport 22 accept } }\\n"\n' > "$fake_bin/nft"
+  PATH="$fake_bin:$PATH" "$ROOT/scripts/linux/network/firewall-rule-analyzer.sh" --output "$run_dir" --quiet
+  out_dir="$(latest_output_dir "$run_dir" firewall-rule-analyzer)"
+  assert_text "$out_dir/findings.json" 'LINUX-FW-OPEN-ADMIN'
+  printf '#!/usr/bin/env bash\nprintf "table inet filter { chain input { ip6 saddr ::/0 tcp dport 22 accept } }\\n"\n' > "$fake_bin/nft"
+  PATH="$fake_bin:$PATH" "$ROOT/scripts/linux/network/firewall-rule-analyzer.sh" --output "$run_dir" --quiet
+  out_dir="$(latest_output_dir "$run_dir" firewall-rule-analyzer)"
+  assert_text "$out_dir/findings.json" 'LINUX-FW-OPEN-ADMIN'
+  printf '#!/usr/bin/env bash\nprintf "table inet filter { chain input { ip saddr 10.0.0.0/8 tcp dport 22 accept } }\\n"\n' > "$fake_bin/nft"
+  PATH="$fake_bin:$PATH" "$ROOT/scripts/linux/network/firewall-rule-analyzer.sh" --output "$run_dir" --quiet
+  out_dir="$(latest_output_dir "$run_dir" firewall-rule-analyzer)"
+  if grep -F 'LINUX-FW-OPEN-ADMIN' "$out_dir/findings.json" >/dev/null; then
+    fail "source-restricted nft rule was reported as broad access"
+  fi
+  printf '#!/usr/bin/env bash\nprintf "table inet filter { chain input { ct state established tcp dport 22 accept } }\\n"\n' > "$fake_bin/nft"
+  PATH="$fake_bin:$PATH" "$ROOT/scripts/linux/network/firewall-rule-analyzer.sh" --output "$run_dir" --quiet
+  out_dir="$(latest_output_dir "$run_dir" firewall-rule-analyzer)"
+  if grep -F 'LINUX-FW-OPEN-ADMIN' "$out_dir/findings.json" >/dev/null; then
+    fail "established-only nft rule was reported as broad access"
+  fi
+  assert_text "$out_dir/normalized/collection-status.tsv" 'unavailable'
+  assert_text "$out_dir/report.md" '## Collection Status'
+  printf '#!/usr/bin/env bash\nprintf "table inet filter { chain input { tcp dport 22 drop } }\\n"\n' > "$fake_bin/nft"
+  printf '#!/usr/bin/env bash\nprintf "22/tcp ALLOW IN Anywhere\\n"\n' > "$fake_bin/ufw"
+  chmod 755 "$fake_bin/ufw"
+  PATH="$fake_bin:$PATH" "$ROOT/scripts/linux/network/firewall-rule-analyzer.sh" --output "$run_dir" --quiet
+  out_dir="$(latest_output_dir "$run_dir" firewall-rule-analyzer)"
+  assert_text "$out_dir/findings.json" 'LINUX-FW-OPEN-ADMIN'
+  printf '#!/usr/bin/env bash\nprintf "unavailable\\n"\n' > "$fake_bin/ufw"
+  printf '#!/usr/bin/env bash\nprintf "services: ssh\\n"\n' > "$fake_bin/firewall-cmd"
+  chmod 755 "$fake_bin/firewall-cmd"
+  PATH="$fake_bin:$PATH" "$ROOT/scripts/linux/network/firewall-rule-analyzer.sh" --output "$run_dir" --quiet
+  out_dir="$(latest_output_dir "$run_dir" firewall-rule-analyzer)"
+  assert_text "$out_dir/findings.json" 'LINUX-FW-ADMIN-PORTS'
 }
 
 test_linux_fixtures() {
@@ -526,6 +709,7 @@ case "${1:-}" in
   script-catalog) test_script_catalog ;;
   output-contract) test_output_contract ;;
   installer) test_installer ;;
+  security-regressions) test_security_regressions ;;
   linux-fixtures) test_linux_fixtures ;;
   linux-feasibility) test_linux_feasibility ;;
   runtime-linux) test_runtime_linux ;;
@@ -539,6 +723,7 @@ case "${1:-}" in
     test_script_catalog
     test_output_contract
     test_installer
+    test_security_regressions
     test_linux_fixtures
     test_linux_feasibility
     test_runtime_linux

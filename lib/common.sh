@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+umask 077
+
 opsforge_repo_root() {
   local src
   src="${BASH_SOURCE[0]}"
@@ -19,6 +21,63 @@ opsforge_hostname() {
 
 opsforge_mkdir() {
   mkdir -p "$1/raw" "$1/normalized"
+  chmod 700 "$1" "$1/raw" "$1/normalized"
+}
+
+opsforge_assert_no_symlink_path() {
+  local path="$1" require_existing="${2:-false}" info owner mode
+  case "$path" in /*) ;; *) path="$(pwd -P)/$path" ;; esac
+  while [ "$path" != / ] && [ "$path" != . ]; do
+    case "$path" in */) path="${path%/}"; continue ;; esac
+    if [ -L "$path" ]; then
+      printf '[ERROR] output path contains a symlink: %s\n' "$path" >&2
+      return 1
+    fi
+    if [ -e "$path" ]; then
+      info="$(stat -Lc '%u:%f' "$path")" || return 1
+      owner="${info%%:*}"
+      mode="${info#*:}"
+      if [ "$owner" != "$(id -u)" ] && [ "$owner" != 0 ] ||
+        { (( (16#$mode & 0x12) != 0 )) &&
+          { [ "$owner" != 0 ] || (( (16#$mode & 0x200) == 0 )); }; }; then
+        printf '[ERROR] output path is writable by another user: %s\n' "$path" >&2
+        return 1
+      fi
+    elif [ "$require_existing" = true ]; then
+      printf '[ERROR] output path disappeared: %s\n' "$path" >&2
+      return 1
+    fi
+    path="$(dirname "$path")"
+  done
+}
+
+opsforge_make_private_dir() {
+  local base="$1" prefix="$2" base_fd expected_dir actual_dir created dir
+  exec {base_fd}<"$base" || return 1
+  if ! opsforge_assert_no_symlink_path "$base" true; then
+    exec {base_fd}<&-
+    return 1
+  fi
+  expected_dir="$(stat -Lc '%d:%i' "$base")" || {
+    exec {base_fd}<&-
+    return 1
+  }
+  actual_dir="$(stat -Lc '%d:%i' "/proc/self/fd/$base_fd")" || {
+    exec {base_fd}<&-
+    return 1
+  }
+  if [ "$actual_dir" != "$expected_dir" ]; then
+    printf '[ERROR] output base changed while opening: %s\n' "$base" >&2
+    exec {base_fd}<&-
+    return 1
+  fi
+  created="$(mktemp -d "/proc/self/fd/$base_fd/${prefix}-$(opsforge_timestamp).XXXXXXXX")" || {
+    exec {base_fd}<&-
+    return 1
+  }
+  dir="$(cd "$created" && pwd -P)"
+  exec {base_fd}<&-
+  printf '%s\n' "$dir"
 }
 
 opsforge_make_output_dir() {
@@ -26,19 +85,14 @@ opsforge_make_output_dir() {
   local script_name="$2"
   local host
   host="$(opsforge_hostname | tr ' /' '__')"
+  opsforge_assert_no_symlink_path "$base" || return 1
   if ! mkdir -p "$base" 2>/dev/null || [ ! -w "$base" ]; then
     base="${OPSFORGE_FALLBACK_OUTPUT:-$(opsforge_repo_root)/.ci-artifacts/runtime-output}"
     printf '[WARN] output path is not writable; using %s\n' "$base" >&2
     mkdir -p "$base"
   fi
-  local dir="${base%/}/${host}-${script_name}-$(opsforge_timestamp)"
-  local candidate="$dir"
-  local n=1
-  while [ -e "$candidate" ]; do
-    n=$((n + 1))
-    candidate="${dir}-${n}"
-  done
-  dir="$candidate"
+  local dir
+  dir="$(opsforge_make_private_dir "$base" "${host}-${script_name}")"
   opsforge_mkdir "$dir"
   printf '%s\n' "$dir"
 }
@@ -205,12 +259,18 @@ opsforge_collect_init_failed_services() {
 }
 
 json_escape() {
-  local s="${1-}"
+  local s="${1-}" control escaped i
   s="${s//\\/\\\\}"
   s="${s//\"/\\\"}"
   s="${s//$'\n'/\\n}"
   s="${s//$'\r'/\\r}"
   s="${s//$'\t'/\\t}"
+  for ((i = 1; i < 32; i++)); do
+    case "$i" in 9|10|13) continue ;; esac
+    printf -v control '%b' "\\$(printf '%03o' "$i")"
+    printf -v escaped '\\u%04x' "$i"
+    s="${s//"$control"/$escaped}"
+  done
   printf '%s' "$s"
 }
 
@@ -253,12 +313,27 @@ finalize_findings_json() {
   } > "$dest"
 }
 
+opsforge_record_collection_status() {
+  local out_dir="$1" outfile="$2" exit_code="$3" status="$4" started_at="$5" ended_at="$6"
+  shift 6
+  local status_file command_text
+  status_file="$out_dir/normalized/collection-status.tsv"
+  command_text="$(printf '%s ' "$@")"
+  command_text="${command_text% }"
+  if [ ! -s "$status_file" ]; then
+    printf 'command\toutput_file\texit_code\tstatus\tstarted_at\tended_at\n' > "$status_file"
+  fi
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$(printf '%s' "$command_text" | tr '\t\n' '  ')" \
+    "${outfile#"$out_dir"/}" \
+    "$exit_code" "$status" "$started_at" "$ended_at" >> "$status_file"
+}
+
 safe_run() {
   local outfile="$1"
   shift
-  local out_dir status_file started_at ended_at exit_code status command_text
+  local out_dir started_at ended_at exit_code status command_text
   out_dir="$(cd "$(dirname "$outfile")/.." && pwd)"
-  status_file="$out_dir/normalized/collection-status.tsv"
   started_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   command_text="$(printf '%s ' "$@")"
   command_text="${command_text% }"
@@ -276,21 +351,12 @@ safe_run() {
     set -e
   } > "$outfile"
   ended_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-  status="ok"
+  status="collected"
   [ "$exit_code" -eq 0 ] || status="failed"
   if [ "${VERBOSE:-0}" = "1" ] && [ "${QUIET:-0}" != "1" ]; then
     printf '[DEBUG] finished: %s exit=%s status=%s\n' "$command_text" "$exit_code" "$status" >&2
   fi
-  if [ ! -s "$status_file" ]; then
-    printf 'command\toutput_file\texit_code\tstatus\tstarted_at\tended_at\n' > "$status_file"
-  fi
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-    "$(printf '%s' "$command_text" | tr '\t\n' '  ')" \
-    "${outfile#$out_dir/}" \
-    "$exit_code" \
-    "$status" \
-    "$started_at" \
-    "$ended_at" >> "$status_file"
+  opsforge_record_collection_status "$out_dir" "$outfile" "$exit_code" "$status" "$started_at" "$ended_at" "$@"
   return 0
 }
 
