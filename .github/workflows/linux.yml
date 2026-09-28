@@ -113,7 +113,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker run -i --rm -v "$PWD:/repo" -w /repo "${{ matrix.image }}" /bin/sh -s <<'CONTAINER'
+          docker run -i --rm -e OPSFORGE_HOST_UID="$(id -u)" -e OPSFORGE_HOST_GID="$(id -g)" -v "$PWD:/repo" -w /repo "${{ matrix.image }}" /bin/sh -s <<'CONTAINER'
           set -eu
 
           if command -v apt-get >/dev/null 2>&1; then
@@ -144,7 +144,7 @@ jobs:
           mkdir -p /repo/.ci-artifacts
           if [ -d /tmp/opsforge-ci-artifacts ]; then
             cp -a /tmp/opsforge-ci-artifacts/. /repo/.ci-artifacts/
-            chown -R "$(stat -c '%u:%g' /repo)" /repo/.ci-artifacts
+            chown -R "$OPSFORGE_HOST_UID:$OPSFORGE_HOST_GID" /repo/.ci-artifacts
           fi
           exit "${result:-0}"
           CONTAINER
