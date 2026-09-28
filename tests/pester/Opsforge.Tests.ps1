@@ -86,4 +86,13 @@ Describe 'opsforge PowerShell scripts' {
                 Should -Match 'Assert-OpsForgeFindingsJson'
         }
     }
+
+    It 'records windows log collection states instead of swallowing errors' {
+        $script = Get-Content -Raw -Path (Join-Path $script:RepoRoot 'scripts\windows\forensic\Test-WinLogTampering.ps1')
+        $script | Should -Match 'collection-status\.tsv'
+        $script | Should -Match "'collected'"
+        $script | Should -Match "'unavailable'"
+        $script | Should -Match "'denied'"
+        $script | Should -Not -Match 'catch \{ \}'
+    }
 }
