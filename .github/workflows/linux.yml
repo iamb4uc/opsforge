@@ -156,3 +156,4 @@ jobs:
           name: linux-${{ matrix.init }}-feasibility-artifacts
           path: .ci-artifacts/
           if-no-files-found: ignore
+          include-hidden-files: true
