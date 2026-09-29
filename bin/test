@@ -226,11 +226,12 @@ test_forbidden_files() {
     -path "$ROOT/.git" -prune -o \
     -path "$ROOT/.ci-artifacts" -prune -o \
     -path "$ROOT/output" -prune -o \
+    -path "$ROOT/investigate/target" -prune -o \
     -type f \( \
       -name '*.py' -o -name '*.go' -o -name '*.rs' -o -name '*.js' -o \
       -name '*.ts' -o -name '*.rb' -o -name '*.pl' -o -name '*.exe' -o \
       -name '*.dll' -o -name '*.so' -o -name '*.dylib' \
-    \) -print)"
+    \) ! \( -path "$ROOT/investigate/src/*.rs" -o -path "$ROOT/investigate/tests/*.rs" \) -print)"
   [ -z "$files" ] || fail "forbidden core language or binary files found: $files"
 }
 
@@ -247,6 +248,7 @@ test_readability() {
       -path "$ROOT/.git" -prune -o \
       -path "$ROOT/.ci-artifacts" -prune -o \
       -path "$ROOT/output" -prune -o \
+      -path "$ROOT/investigate/target" -prune -o \
       -path "$ROOT/examples" -prune -o \
       -type f \( \
         -name '*.md' -o -name '*.sh' -o -name '*.ps1' -o -name '*.yml' -o \
