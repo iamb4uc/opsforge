@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256};
 use std::{
     fs::{self, DirBuilder, File, OpenOptions},
     io::{BufReader, BufWriter, Read, Write},
-    os::unix::fs::DirBuilderExt,
+    os::unix::fs::{DirBuilderExt, MetadataExt},
     path::{Path, PathBuf},
 };
 
@@ -77,11 +77,31 @@ fn append_file(path: &Path) -> Result<BufWriter<File>> {
     ))
 }
 
+fn validate_root_output_base(base: &Path) -> Result<()> {
+    for ancestor in base.ancestors() {
+        let metadata = fs::metadata(ancestor)?;
+        if metadata.uid() != 0 || metadata.mode() & 0o022 != 0 {
+            anyhow::bail!(
+                "case output must be below root-owned directories without group or world write access: {}",
+                ancestor.display()
+            );
+        }
+    }
+    Ok(())
+}
+
 impl Case {
     pub fn new(output_base: &Path) -> Result<Self> {
         fs::create_dir_all(output_base)
             .with_context(|| format!("creating {}", output_base.display()))?;
         let base = fs::canonicalize(output_base)?;
+        let uid = std::process::Command::new("id").arg("-u").output()?;
+        if !uid.status.success() {
+            anyhow::bail!("id -u failed");
+        }
+        if uid.stdout == b"0\n" {
+            validate_root_output_base(&base)?;
+        }
         let host = std::process::Command::new("hostname")
             .output()
             .context("reading hostname")?;
@@ -212,8 +232,13 @@ impl Case {
 
 #[cfg(test)]
 mod tests {
-    use super::{Case, Coverage, CoverageState, Event, EvidenceLevel};
+    use super::{Case, Coverage, CoverageState, Event, EvidenceLevel, validate_root_output_base};
     use std::fs;
+
+    #[test]
+    fn rejects_user_writable_root_output_parent() {
+        assert!(validate_root_output_base(std::path::Path::new("/tmp")).is_err());
+    }
 
     #[test]
     fn preserves_incremental_evidence_and_status() {

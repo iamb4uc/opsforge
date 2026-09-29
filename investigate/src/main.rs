@@ -51,11 +51,10 @@ fn main() -> Result<()> {
         let config: RunConfig = serde_json::from_reader(std::io::stdin())?;
         return execute(&config, !args.non_interactive);
     }
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .context("HOME is not set; pass --output")?;
-    let mut config =
-        RunConfig::default_for(args.output.unwrap_or_else(|| home.join("opsforge-cases")));
+    let mut config = RunConfig::default_for(
+        args.output
+            .unwrap_or_else(|| PathBuf::from("/var/lib/opsforge/cases")),
+    );
     config.capture_duration = args.duration;
     config.imports = args.imports;
     config.exfil = !args.no_exfil;
@@ -87,7 +86,9 @@ fn main() -> Result<()> {
             bail!("sudo authentication failed; no collection started");
         }
     }
-    let executable = std::env::current_exe()?;
+    // /proc pins the executable inode while this process lives; a replaced
+    // bootstrap path cannot change what sudo executes.
+    let executable = format!("/proc/{}/exe", std::process::id());
     let mut command = Command::new("sudo");
     command
         .arg("--")

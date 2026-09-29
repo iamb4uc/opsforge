@@ -38,8 +38,8 @@ jobs:
             --non-interactive --no-exfil --no-timeline --no-downloads \
             --no-inventory --no-capture \
             --import /tmp/opsforge-investigator-fixture.log \
-            --output /tmp/opsforge-investigator-case
-          page="$(find /tmp/opsforge-investigator-case -path '*/dashboard/index.html' -print -quit)"
+            --output /var/lib/opsforge-investigator-ci
+          page="$(find /var/lib/opsforge-investigator-ci -path '*/dashboard/index.html' -print -quit)"
           test -n "$page"
           ./bin/validate-output-contract "$(dirname "$(dirname "$page")")"
 
