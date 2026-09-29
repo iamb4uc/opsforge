@@ -1,6 +1,6 @@
 # opsforge
 
-opsforge is a shell-only toolkit for SOC, NOC, Linux, Windows, IR, and ops work.
+opsforge is a defensive toolkit for SOC, NOC, Linux, Windows, IR, and ops work.
 
 It is built for the boring stuff that actually matters: triage, persistence checks, disk issues, timelines, network exposure, and reports you can use.
 
@@ -11,12 +11,12 @@ No fake polish. No random helper stack. No toy recon wrappers.
 opsforge is beta. The scripts are useful, but they are still being tested across
 real systems and CI runners.
 
-The project stays shell-only:
+The existing command toolkit stays shell-only:
 
 - Linux and Unix scripts use Bash or POSIX sh where that makes sense.
 - Windows scripts use PowerShell.
-- Core tooling does not use Python, Go, Rust, Node.js, Ruby, Perl, or compiled
-  helpers.
+- The Linux investigator is a separate prebuilt Rust runner for guided case
+  collection and offline reporting. It does not require Rust on the target.
 - Scripts are read-only by default unless a script clearly says otherwise and
   exposes an explicit action flag.
 
@@ -56,6 +56,28 @@ Windows:
 ```
 
 ## Commands
+
+After the next tagged release, launch the Linux investigator with one command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/iamb4uc/opsforge/main/investigate/install-and-run.sh -o /tmp/opsforge-investigate-bootstrap && bash /tmp/opsforge-investigate-bootstrap --remove-bootstrap
+```
+
+The bootstrap verifies the release archive with SHA-256, installs missing
+`tcpdump`, `ss`, or `timeout` through the host package manager, and opens the
+setup TUI. It checks existing root access first, then requests `sudo` if needed.
+The default case parent is `~/opsforge-cases`; the TUI lets you change it.
+The live capture defaults to `5m` and accepts positive `s`, `m`, `h`, or `d`
+durations. The temporary binary and bootstrap are removed after the run; the
+case directory stays. Use `--output PATH`, `--duration 1h`, or `--import PATH`
+after `--remove-bootstrap` when needed.
+
+The case contains raw evidence, normalized JSONL, source coverage, hashes,
+findings, a Markdown report, and offline HTML pages. Browser history and log
+keywords are leads, not proof of upload. Historical application traffic can
+only be attributed where the device or imported logs retained that detail.
+See [Linux investigator notes](docs/linux-investigator.md) for source coverage
+and limits.
 
 Install on Linux/Unix:
 
