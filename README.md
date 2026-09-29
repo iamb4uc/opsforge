@@ -57,7 +57,7 @@ Windows:
 
 ## Commands
 
-After the next tagged release, launch the Linux investigator with one command:
+Launch the Linux investigator with one command:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/iamb4uc/opsforge/main/investigate/install-and-run.sh -o /tmp/opsforge-investigate-bootstrap && bash /tmp/opsforge-investigate-bootstrap --install-deps --remove-bootstrap

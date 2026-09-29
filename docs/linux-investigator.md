@@ -4,8 +4,8 @@ The investigator is a separate Linux x86_64 case runner. The release bootstrap
 downloads a prebuilt binary and checksum, verifies the archive, and starts
 terminal setup. `--install-deps` installs missing capture tools through the
 local package manager.
-No Rust toolchain is needed on the investigated host. The release asset becomes
-available when a new signed tag passes the release workflow.
+No Rust toolchain is needed on the investigated host. Release assets are
+published from signed tags after the release workflow passes.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/iamb4uc/opsforge/main/investigate/install-and-run.sh -o /tmp/opsforge-investigate-bootstrap && bash /tmp/opsforge-investigate-bootstrap --install-deps --remove-bootstrap
