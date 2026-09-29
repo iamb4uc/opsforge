@@ -30,8 +30,12 @@ impl FromStr for CaptureDuration {
     type Err = &'static str;
 
     fn from_str(input: &str) -> Result<Self, Self::Err> {
-        let (digits, unit) =
-            input.split_at(input.len().checked_sub(1).ok_or("use 1s, 5m, 1h, or 1d")?);
+        let unit_start = input
+            .char_indices()
+            .last()
+            .map(|(index, _)| index)
+            .ok_or("use 1s, 5m, 1h, or 1d")?;
+        let (digits, unit) = input.split_at(unit_start);
         if digits.is_empty() || !digits.bytes().all(|digit| digit.is_ascii_digit()) {
             return Err("use a positive integer followed by s, m, h, or d");
         }
@@ -106,7 +110,16 @@ mod tests {
 
     #[test]
     fn rejects_missing_or_unbounded_capture_duration() {
-        for input in ["", "0s", "1", "1w", "1.5h", "999999999999999999999d"] {
+        for input in [
+            "",
+            "0s",
+            "1",
+            "1w",
+            "1.5h",
+            "é",
+            "1é",
+            "999999999999999999999d",
+        ] {
             assert!(input.parse::<CaptureDuration>().is_err(), "{input}");
         }
     }
