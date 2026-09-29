@@ -1,0 +1,27 @@
+[package]
+name = "opsforge-investigate"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+description = "Guided Linux evidence collection and offline case reporting"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+crossterm = "0.29"
+jiff = "0.2"
+ratatui = "0.30"
+rusqlite = { version = "0.37", features = ["bundled", "backup"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+walkdir = "2"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = "symbols"

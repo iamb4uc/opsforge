@@ -8,6 +8,52 @@ permissions:
   contents: read
 
 jobs:
+  investigator:
+    name: investigator build and tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+      - name: Rust toolchain
+        shell: bash
+        run: rustup toolchain install 1.93.0 --profile minimal --component clippy,rustfmt
+      - name: Rust checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +1.93.0 fmt --manifest-path investigate/Cargo.toml --check
+          cargo +1.93.0 clippy --locked --manifest-path investigate/Cargo.toml --all-targets -- -D warnings
+          cargo +1.93.0 test --locked --manifest-path investigate/Cargo.toml
+          cargo +1.93.0 build --locked --manifest-path investigate/Cargo.toml
+          bash -n investigate/install-and-run.sh
+          shellcheck investigate/install-and-run.sh
+          investigate/install-and-run.sh --help
+
+      - name: investigator static release build
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+          rustup target add --toolchain 1.93.0 x86_64-unknown-linux-musl
+          export CC_x86_64_unknown_linux_musl=musl-gcc
+          export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc
+          cargo +1.93.0 build --locked --release --target x86_64-unknown-linux-musl --manifest-path investigate/Cargo.toml
+
+      - name: investigator case smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' 'POST https://example.test/upload' > /tmp/opsforge-investigator-fixture.log
+          sudo investigate/target/debug/opsforge-investigate \
+            --non-interactive --no-exfil --no-timeline --no-downloads \
+            --no-inventory --no-capture \
+            --import /tmp/opsforge-investigator-fixture.log \
+            --output /var/lib/opsforge-investigator-ci
+          page="$(sudo find /var/lib/opsforge-investigator-ci -path '*/dashboard/index.html' -print -quit)"
+          test -n "$page"
+          sudo ./bin/validate-output-contract "$(dirname "$(dirname "$page")")"
+
   shell:
     name: shell validation
     runs-on: ubuntu-latest

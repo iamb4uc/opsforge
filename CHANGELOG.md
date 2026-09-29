@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.6.0
+
+- Added a Linux investigator with guided setup, source coverage, and a shareable
+  offline case dashboard.
+- Added sequential raw and JSONL collection for retained logs, browser history,
+  Chromium downloads, active sockets, imports, file inventory, and timed packets.
+- Added case hashes and a verified release bootstrap for Linux x86_64.
+- Added Rust checks and a case smoke test to Linux CI.
+
 ## v0.5.0 - 2026-05-20
 
 - Reformatted source files for readability and reviewability.
