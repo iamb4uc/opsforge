@@ -60,13 +60,14 @@ Windows:
 After the next tagged release, launch the Linux investigator with one command:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/iamb4uc/opsforge/main/investigate/install-and-run.sh -o /tmp/opsforge-investigate-bootstrap && bash /tmp/opsforge-investigate-bootstrap --remove-bootstrap
+curl -fsSL https://raw.githubusercontent.com/iamb4uc/opsforge/main/investigate/install-and-run.sh -o /tmp/opsforge-investigate-bootstrap && bash /tmp/opsforge-investigate-bootstrap --install-deps --remove-bootstrap
 ```
 
-The bootstrap verifies the release archive with SHA-256, installs missing
+The bootstrap verifies the release archive with SHA-256 and, with `--install-deps`, installs missing
 `tcpdump`, `ss`, or `timeout` through the host package manager, and opens the
 setup TUI. It checks existing root access first, then requests `sudo` if needed.
-The default case parent is `~/opsforge-cases`; the TUI lets you change it.
+The default case parent is `/var/lib/opsforge/cases`; the TUI lets you change it
+to another root-owned location whose parent directories are not group or world writable.
 The live capture defaults to `5m` and accepts positive `s`, `m`, `h`, or `d`
 durations. The temporary binary and bootstrap are removed after the run; the
 case directory stays. Use `--output PATH`, `--duration 1h`, or `--import PATH`

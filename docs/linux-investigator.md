@@ -1,13 +1,14 @@
 # Linux investigator
 
 The investigator is a separate Linux x86_64 case runner. The release bootstrap
-downloads a prebuilt binary and checksum, verifies the archive, installs missing
-capture tools with the local package manager, and starts the terminal setup.
+downloads a prebuilt binary and checksum, verifies the archive, and starts
+terminal setup. `--install-deps` installs missing capture tools through the
+local package manager.
 No Rust toolchain is needed on the investigated host. The release asset becomes
 available when a new signed tag passes the release workflow.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/iamb4uc/opsforge/main/investigate/install-and-run.sh -o /tmp/opsforge-investigate-bootstrap && bash /tmp/opsforge-investigate-bootstrap --remove-bootstrap
+curl -fsSL https://raw.githubusercontent.com/iamb4uc/opsforge/main/investigate/install-and-run.sh -o /tmp/opsforge-investigate-bootstrap && bash /tmp/opsforge-investigate-bootstrap --install-deps --remove-bootstrap
 ```
 
 The TUI selects exfiltration review, device timeline, downloads, deep file
@@ -20,8 +21,11 @@ It stops if elevation fails.
 
 ## Case files
 
-Cases are created at `~/opsforge-cases/HOST-investigate-YYYYMMDD-HHMMSS/`
-by default, or under the selected parent directory. They contain:
+Cases are created at `/var/lib/opsforge/cases/HOST-investigate-YYYYMMDD-HHMMSS/`
+by default, or under a selected root-owned parent directory. Every ancestor of
+the selected location must be root-owned and lack group or world write access;
+this prevents an unprivileged process from redirecting root-owned case writes.
+The cases contain:
 
 - `raw/`: copied logs, browser database snapshots, command output, packet
   capture, and decoded packet text.

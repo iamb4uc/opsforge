@@ -4,14 +4,15 @@ IFS=$'\n\t'
 
 VERSION="latest"
 REMOVE_BOOTSTRAP=0
+INSTALL_DEPS=0
 ARGS=()
 
 usage() {
   cat <<'HELP'
-Usage: install-and-run.sh [--version TAG] [--remove-bootstrap] [investigator options]
+Usage: install-and-run.sh [--version TAG] [--install-deps] [--remove-bootstrap] [investigator options]
 
-Downloads and verifies the Linux x86_64 release binary, installs missing
-capture tools through the system package manager, then launches the TUI.
+Downloads and verifies the Linux x86_64 release binary, then launches the TUI.
+--install-deps installs missing capture tools through the package manager.
 The binary and download files are removed when the run ends. Case output stays.
 
 Investigator options are passed through. Use --help-investigator to see them.
@@ -21,6 +22,7 @@ HELP
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --version) VERSION="${2:?missing version}"; shift 2 ;;
+    --install-deps) INSTALL_DEPS=1; shift ;;
     --remove-bootstrap) REMOVE_BOOTSTRAP=1; shift ;;
     --help-investigator) ARGS+=(--help); shift ;;
     -h|--help) usage; exit 0 ;;
@@ -67,7 +69,7 @@ curl -fsSL "$base/$asset.sha256" -o "$tmp_dir/$asset.sha256"
 tar -xzf "$tmp_dir/$asset" -C "$tmp_dir" opsforge-investigate
 chmod 700 "$tmp_dir/opsforge-investigate"
 
-if [ "${ARGS[*]-}" != --help ]; then
+if [ "$INSTALL_DEPS" = 1 ] && [ "${ARGS[*]-}" != --help ]; then
   missing=()
   command -v tcpdump >/dev/null 2>&1 || missing+=(tcpdump)
   command -v ss >/dev/null 2>&1 || missing+=(iproute2)
@@ -82,6 +84,9 @@ if [ "${ARGS[*]-}" != --help ]; then
       "${privilege[@]}" apt-get update
       "${privilege[@]}" apt-get install -y "${missing[@]}"
     elif command -v dnf >/dev/null 2>&1; then
+      for index in "${!missing[@]}"; do
+        if [ "${missing[index]}" = iproute2 ]; then missing[index]=iproute; fi
+      done
       "${privilege[@]}" dnf install -y "${missing[@]}"
     elif command -v pacman >/dev/null 2>&1; then
       "${privilege[@]}" pacman -Sy --needed --noconfirm "${missing[@]}"
