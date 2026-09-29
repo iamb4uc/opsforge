@@ -89,7 +89,7 @@ if [ "$INSTALL_DEPS" = 1 ] && [ "${ARGS[*]-}" != --help ]; then
       done
       "${privilege[@]}" dnf install -y "${missing[@]}"
     elif command -v pacman >/dev/null 2>&1; then
-      "${privilege[@]}" pacman -Sy --needed --noconfirm "${missing[@]}"
+      "${privilege[@]}" pacman -S --needed --noconfirm "${missing[@]}"
     elif command -v xbps-install >/dev/null 2>&1; then
       "${privilege[@]}" xbps-install -Sy "${missing[@]}"
     else
