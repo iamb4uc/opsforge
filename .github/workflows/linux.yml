@@ -50,9 +50,9 @@ jobs:
             --no-inventory --no-capture \
             --import /tmp/opsforge-investigator-fixture.log \
             --output /var/lib/opsforge-investigator-ci
-          page="$(find /var/lib/opsforge-investigator-ci -path '*/dashboard/index.html' -print -quit)"
+          page="$(sudo find /var/lib/opsforge-investigator-ci -path '*/dashboard/index.html' -print -quit)"
           test -n "$page"
-          ./bin/validate-output-contract "$(dirname "$(dirname "$page")")"
+          sudo ./bin/validate-output-contract "$(dirname "$(dirname "$page")")"
 
   shell:
     name: shell validation
