@@ -73,6 +73,12 @@ Describe 'opsforge PowerShell scripts' {
         @($json | ConvertFrom-Json).Count | Should -Be 1
     }
 
+    It 'names scheduled task triggers without CIM metadata' {
+        . (Join-Path $script:RepoRoot 'lib\windows\Common.ps1')
+        Get-OpsForgeTaskTriggerName ([pscustomobject]@{ TriggerType = 'Logon' }) | Should -Be 'Logon'
+        Get-OpsForgeTaskTriggerName ([pscustomobject]@{ CimClass = [pscustomobject]@{ CimClassName = 'Daily' } }) | Should -Be 'Daily'
+    }
+
     It 'rejects non-array finding JSON in both contract paths' {
         . (Join-Path $script:RepoRoot 'lib\windows\Common.ps1')
 

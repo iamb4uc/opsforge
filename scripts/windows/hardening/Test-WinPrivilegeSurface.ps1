@@ -22,11 +22,20 @@ $backup = Get-LocalGroupMember -Group 'Backup Operators' -ErrorAction SilentlyCo
 $services = Get-CimInstance Win32_Service
 $tasks = Get-ScheduledTask
 
-$admins | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\local-admins.json')
-$rdp | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\rdp-users.json')
-$backup | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\backup-operators.json')
-$services | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\services.json')
-$tasks | ConvertTo-Json -Depth 6 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\scheduled-tasks.json')
+$admins | Select-Object Name,ObjectClass,PrincipalSource,@{Name='SID';Expression={$_.SID.Value}} | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\local-admins.json')
+$rdp | Select-Object Name,ObjectClass,PrincipalSource,@{Name='SID';Expression={$_.SID.Value}} | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\rdp-users.json')
+$backup | Select-Object Name,ObjectClass,PrincipalSource,@{Name='SID';Expression={$_.SID.Value}} | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\backup-operators.json')
+$services | Select-Object -Property * -ExcludeProperty CimClass,CimInstanceProperties,CimSystemProperties | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\services.json')
+$tasks | ForEach-Object {
+    [pscustomobject]@{
+        TaskName = $_.TaskName; TaskPath = $_.TaskPath; State = [string]$_.State
+        Author = $_.Author; Description = $_.Description
+        UserId = $_.Principal.UserId; RunLevel = [string]$_.Principal.RunLevel
+        Hidden = $_.Settings.Hidden
+        Actions = ($_.Actions | ForEach-Object { Get-OpsForgeTaskActionText $_ }) -join '; '
+        Triggers = ($_.Triggers | ForEach-Object { Get-OpsForgeTaskTriggerName $_ }) -join '; '
+    }
+} | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\scheduled-tasks.json')
 
 foreach ($member in @($admins)) {
     if ($member.ObjectClass -eq 'User' -and $member.Name -notmatch '\\Administrator$') {
@@ -57,13 +66,13 @@ foreach ($task in $tasks) {
 
 try {
     $uac = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
-    $uac | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\uac.json')
+    $uac | Select-Object -Property * -ExcludeProperty PSPath,PSParentPath,PSChildName,PSDrive,PSProvider | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\uac.json')
     if ($uac.EnableLUA -eq 0) {
         $findings.Add((New-OpsForgeFinding 'WIN-PRIV-UAC-OFF' 'UAC is disabled' 'high' 'hardening' 'EnableLUA=0' 'Enable UAC unless there is a documented exception.'))
     }
 } catch { }
 
-Get-Service WinRM,TermService -ErrorAction SilentlyContinue | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\remote-services.json')
+Get-Service WinRM,TermService -ErrorAction SilentlyContinue | Select-Object Name,DisplayName,Status,StartType,ServiceType | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\remote-services.json')
 
 Save-OpsForgeFindings -Findings $findings.ToArray() -OutputDirectory $OutDir
 $adminCount = [int](@($admins).Count)

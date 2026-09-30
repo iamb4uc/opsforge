@@ -20,9 +20,9 @@ try {
     $status = Get-MpComputerStatus
     $prefs = Get-MpPreference
     $threats = Get-MpThreatDetection -ErrorAction SilentlyContinue
-    $status | ConvertTo-Json -Depth 6 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\defender-status.json')
-    $prefs | ConvertTo-Json -Depth 6 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\defender-preferences.json')
-    $threats | ConvertTo-Json -Depth 6 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\threat-history.json')
+    $status | Select-Object -Property * -ExcludeProperty CimClass,CimInstanceProperties,CimSystemProperties | ConvertTo-Json -Depth 6 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\defender-status.json')
+    $prefs | Select-Object -Property * -ExcludeProperty CimClass,CimInstanceProperties,CimSystemProperties | ConvertTo-Json -Depth 6 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\defender-preferences.json')
+    $threats | Select-Object -Property * -ExcludeProperty CimClass,CimInstanceProperties,CimSystemProperties | ConvertTo-Json -Depth 6 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\threat-history.json')
     if (-not $status.RealTimeProtectionEnabled) {
         $findings.Add((New-OpsForgeFinding 'WIN-DEFENDER-REALTIME-OFF' 'Defender real-time protection is disabled' 'critical' 'hardening' 'RealTimeProtectionEnabled=False' 'Re-enable real-time protection or document a short maintenance exception.'))
     }

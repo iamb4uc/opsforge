@@ -60,7 +60,14 @@ foreach ($query in @(
         }
     }
 }
-$events.ToArray() | ConvertTo-Json -Depth 6 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\tampering-events.json')
+$events.ToArray() | ForEach-Object {
+    [pscustomobject]@{
+        TimeCreated = $_.TimeCreated; Id = $_.Id; RecordId = $_.RecordId
+        LogName = $_.LogName; ProviderName = $_.ProviderName; MachineName = $_.MachineName
+        Message = $_.Message; UserId = $(if ($_.UserId) { $_.UserId.Value } else { $null })
+        Xml = $_.ToXml()
+    }
+} | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\tampering-events.json')
 
 foreach ($event in $events) {
     switch ($event.Id) {
@@ -97,7 +104,7 @@ foreach ($serviceName in @('EventLog','Sysmon64','Sysmon','WinDefend')) {
         Add-CollectionStatus -Name "service:$serviceName" -Status (Get-CollectionFailureStatus $_) -Detail $_.Exception.Message
     }
 }
-$services.ToArray() | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\security-services.json')
+$services.ToArray() | Select-Object Name,DisplayName,Status,StartType,ServiceType | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\security-services.json')
 
 $statusPath = Join-Path $OutDir 'normalized\collection-status.tsv'
 @("source`tstatus`tdetail") + @($collection | ForEach-Object { "$(($_.Name) -replace "`t", ' ')`t$($_.Status)`t$(($_.Detail) -replace "`t|`r|`n", ' ')" }) |

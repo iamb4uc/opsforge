@@ -33,7 +33,7 @@ foreach ($log in $logs) {
                 timestamp = $event.TimeCreated
                 source = $log
                 event_type = $event.Id
-                user = $event.UserId
+                user = $(if ($event.UserId) { $event.UserId.Value } else { $null })
                 process = $event.ProviderName
                 summary = $summary
                 severity = $severity

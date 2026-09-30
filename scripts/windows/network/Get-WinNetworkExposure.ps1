@@ -39,10 +39,10 @@ $records = foreach ($conn in $listeners) {
 }
 
 $records | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\listening-tcp.json')
-$connections | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\tcp-connections.json')
-Get-DnsClientCache -ErrorAction SilentlyContinue | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\dns-cache.json')
-Get-NetAdapter -ErrorAction SilentlyContinue | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\net-adapters.json')
-Get-NetRoute -ErrorAction SilentlyContinue | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\routes.json')
+$connections | Select-Object -Property * -ExcludeProperty CimClass,CimInstanceProperties,CimSystemProperties | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\tcp-connections.json')
+Get-DnsClientCache -ErrorAction SilentlyContinue | Select-Object -Property * -ExcludeProperty CimClass,CimInstanceProperties,CimSystemProperties | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\dns-cache.json')
+Get-NetAdapter -ErrorAction SilentlyContinue | Select-Object -Property * -ExcludeProperty CimClass,CimInstanceProperties,CimSystemProperties | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\net-adapters.json')
+Get-NetRoute -ErrorAction SilentlyContinue | Select-Object -Property * -ExcludeProperty CimClass,CimInstanceProperties,CimSystemProperties | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\routes.json')
 
 foreach ($record in $records) {
     $seed = Get-OpsForgeIdSeed "$($record.LocalAddress):$($record.LocalPort):$($record.OwningProcess)"

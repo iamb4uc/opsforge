@@ -238,6 +238,7 @@ function Invoke-SafeProfileCheck {
 
 function Test-Runtime {
     Write-TestLine 'running safe windows runtime checks'
+    $WarningPreference = 'Stop'
     $outputRoot = New-RuntimeOutputRoot
     & (Join-Path $Root 'bin\opsforge.ps1') doctor -OutputPath $outputRoot | Out-Null
     Invoke-SafeRuntimeCheck -Name 'triage' -Arguments @('windows','triage') -ScriptName 'Invoke-WinTriage' -OutputRoot $outputRoot
