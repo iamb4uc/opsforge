@@ -44,7 +44,7 @@ TMP_FINDINGS="$OUT_DIR/normalized/findings.tmp"
 safe_run "$OUT_DIR/raw/sudo-l.txt" sh -c 'sudo -l -n 2>&1 || true'
 safe_run "$OUT_DIR/raw/sudoers.txt" sh -c 'find /etc/sudoers /etc/sudoers.d -maxdepth 2 -type f -print -exec sed -n "1,160p" {} \; 2>/dev/null || true'
 safe_run "$OUT_DIR/raw/groups.txt" getent group
-safe_run "$OUT_DIR/raw/path-permissions.txt" sh -c 'printf "%s\n" "$PATH" | tr ":" "\n" | while read -r d; do [ -n "$d" ] && [ -e "$d" ] && stat -c "%A %U %G %n" "$d"; done'
+safe_run "$OUT_DIR/raw/path-permissions.txt" sh -c 'printf "%s\n" "$PATH" | tr ":" "\n" | while read -r d; do [ -n "$d" ] && [ -e "$d" ] && stat -Lc "%A %U %G %n" "$d"; done'
 safe_run "$OUT_DIR/raw/capabilities.txt" sh -c 'if command -v getcap >/dev/null 2>&1; then for path in /bin /sbin /usr/bin /usr/sbin /usr/local/bin /usr/local/sbin /opt; do [ -e "$path" ] || continue; if command -v timeout >/dev/null 2>&1; then timeout 20 getcap -r "$path" 2>/dev/null || true; else getcap -r "$path" 2>/dev/null || true; fi; done; fi'
 safe_run "$OUT_DIR/raw/suid-sgid.txt" sh -c 'if command -v timeout >/dev/null 2>&1; then timeout 60 find / -xdev \( -perm -4000 -o -perm -2000 \) -type f -printf "%m %u %g %p\n" 2>/dev/null || true; else find / -xdev \( -perm -4000 -o -perm -2000 \) -type f -printf "%m %u %g %p\n" 2>/dev/null || true; fi'
 safe_run "$OUT_DIR/raw/writable-scheduled-service-paths.txt" bash -c '
@@ -88,7 +88,7 @@ awk -F: '$1=="docker" || $1=="lxd" {print}' "$OUT_DIR/raw/groups.txt" | while IF
   write_finding_json "$TMP_FINDINGS" "LINUX-PRIV-GROUP-$(printf '%s' "$line" | cksum | awk '{print $1}')" "$title" "$severity" "$HOST" "hardening" "$line" "$recommendation"
 done
 
-awk '$1 ~ /^..w|^.....w|^........w/ {print}' "$OUT_DIR/raw/path-permissions.txt" | while IFS= read -r line; do
+awk 'substr($1, 6, 1) == "w" || substr($1, 9, 1) == "w" {print}' "$OUT_DIR/raw/path-permissions.txt" | while IFS= read -r line; do
   severity="high"
   title="Writable PATH directory"
   recommendation="Remove write access from PATH directories or remove them from privileged execution paths."
