@@ -56,11 +56,11 @@ scan_path() {
   local path="$1"
   if [ -f "$path" ]; then
     printf '%s\n' "$path" >> "$RAW"
-    grep -Eni "$PATTERN" "$path" >> "$MATCHES" 2>/dev/null || true
+    grep -HEni "$PATTERN" "$path" >> "$MATCHES" 2>/dev/null || true
   elif [ -d "$path" ]; then
     while IFS= read -r file; do
       printf '%s\n' "$file" >> "$RAW"
-      grep -Eni "$PATTERN" "$file" >> "$MATCHES" 2>/dev/null || true
+      grep -HEni "$PATTERN" "$file" >> "$MATCHES" 2>/dev/null || true
     done < <(find "$path" -xdev -maxdepth 3 -type f -print 2>/dev/null || true)
   fi
 }

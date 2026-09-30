@@ -468,30 +468,46 @@ test_security_regressions() {
     fail "default SSH algorithms were reported as weak"
   fi
 
-  fixture_root="$run_dir/privileged"
-  mkdir -p "$fixture_root"
-  cp /bin/true "$fixture_root/tool"
-  chmod 4755 "$fixture_root/tool"
-  baseline="$run_dir/suid-baseline.tsv"
-  OPSFORGE_SUID_SCAN_ROOT="$fixture_root" "$ROOT/scripts/linux/hardening/suid-drift-monitor.sh" --baseline --baseline-file "$baseline" --output "$run_dir" --quiet
-  cp /bin/false "$fixture_root/tool"
-  chmod 4755 "$fixture_root/tool"
-  OPSFORGE_SUID_SCAN_ROOT="$fixture_root" "$ROOT/scripts/linux/hardening/suid-drift-monitor.sh" --check --baseline-file "$baseline" --output "$run_dir" --quiet
-  changed_dir="$(latest_output_dir "$run_dir" suid-drift-monitor)"
-  assert_text "$changed_dir/findings.json" 'LINUX-SUID-CHANGED'
-  if grep -F 'LINUX-SUID-WW-' "$changed_dir/findings.json" >/dev/null; then
-    fail "ordinary 4755 file was reported as world-writable"
+  (
+    fixture_root="$run_dir/privileged"
+    mkdir -p "$fixture_root"
+    cp /bin/true "$fixture_root/tool"
+    trap 'chmod 700 "$fixture_root/tool" 2>/dev/null || true' EXIT
+    chmod 4755 "$fixture_root/tool"
+    baseline="$run_dir/suid-baseline.tsv"
+    OPSFORGE_SUID_SCAN_ROOT="$fixture_root" "$ROOT/scripts/linux/hardening/suid-drift-monitor.sh" --baseline --baseline-file "$baseline" --output "$run_dir" --quiet
+    cp /bin/false "$fixture_root/tool"
+    chmod 4755 "$fixture_root/tool"
+    OPSFORGE_SUID_SCAN_ROOT="$fixture_root" "$ROOT/scripts/linux/hardening/suid-drift-monitor.sh" --check --baseline-file "$baseline" --output "$run_dir" --quiet
+    changed_dir="$(latest_output_dir "$run_dir" suid-drift-monitor)"
+    assert_text "$changed_dir/findings.json" 'LINUX-SUID-CHANGED'
+    if grep -F 'LINUX-SUID-WW-' "$changed_dir/findings.json" >/dev/null; then
+      fail "ordinary 4755 file was reported as world-writable"
+    fi
+    chmod 4775 "$fixture_root/tool"
+    OPSFORGE_SUID_SCAN_ROOT="$fixture_root" "$ROOT/scripts/linux/hardening/suid-drift-monitor.sh" --check --baseline-file "$baseline" --output "$run_dir" --quiet
+    changed_dir="$(latest_output_dir "$run_dir" suid-drift-monitor)"
+    if grep -F 'LINUX-SUID-WW-' "$changed_dir/findings.json" >/dev/null; then
+      fail "group-writable 4775 file was reported as world-writable"
+    fi
+    chmod 4777 "$fixture_root/tool"
+    OPSFORGE_SUID_SCAN_ROOT="$fixture_root" "$ROOT/scripts/linux/hardening/suid-drift-monitor.sh" --check --baseline-file "$baseline" --output "$run_dir" --quiet
+    changed_dir="$(latest_output_dir "$run_dir" suid-drift-monitor)"
+    assert_text "$changed_dir/findings.json" 'LINUX-SUID-WW-'
+  )
+
+  mkdir -p "$run_dir/path-private" "$run_dir/path-world"
+  chmod 700 "$run_dir/path-private"
+  chmod 777 "$run_dir/path-world"
+  ln -s /usr/bin "$run_dir/path-link"
+  PATH="$run_dir/path-private:$run_dir/path-world:$run_dir/path-link:$PATH" \
+    "$ROOT/scripts/linux/hardening/linux-privilege-surface-audit.sh" --output "$run_dir" --quiet
+  out_dir="$(latest_output_dir "$run_dir" linux-privilege-surface-audit)"
+  assert_text "$out_dir/findings.json" "$run_dir/path-world"
+  if grep -F "$run_dir/path-private" "$out_dir/findings.json" >/dev/null ||
+    grep -F "$run_dir/path-link" "$out_dir/findings.json" >/dev/null; then
+    fail "private or secure symlink PATH directory was reported writable"
   fi
-  chmod 4775 "$fixture_root/tool"
-  OPSFORGE_SUID_SCAN_ROOT="$fixture_root" "$ROOT/scripts/linux/hardening/suid-drift-monitor.sh" --check --baseline-file "$baseline" --output "$run_dir" --quiet
-  changed_dir="$(latest_output_dir "$run_dir" suid-drift-monitor)"
-  if grep -F 'LINUX-SUID-WW-' "$changed_dir/findings.json" >/dev/null; then
-    fail "group-writable 4775 file was reported as world-writable"
-  fi
-  chmod 4777 "$fixture_root/tool"
-  OPSFORGE_SUID_SCAN_ROOT="$fixture_root" "$ROOT/scripts/linux/hardening/suid-drift-monitor.sh" --check --baseline-file "$baseline" --output "$run_dir" --quiet
-  changed_dir="$(latest_output_dir "$run_dir" suid-drift-monitor)"
-  assert_text "$changed_dir/findings.json" 'LINUX-SUID-WW-'
 
   fake_bin="$run_dir/fake-bin"
   mkdir -p "$fake_bin"
@@ -558,6 +574,7 @@ test_linux_fixtures() {
   [ -n "$persistence_dir" ] || fail "persistence hunter did not create an output directory"
   assert_file "$persistence_dir/findings.json"
   assert_text "$persistence_dir/findings.json" "LINUX-PERSISTENCE"
+  assert_text "$persistence_dir/findings.json" "$home_dir/.bashrc:3"
   assert_text "$persistence_dir/report.md" "Suspicious Matches"
   assert_output_contract "$persistence_dir"
 
