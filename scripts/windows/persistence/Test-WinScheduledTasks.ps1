@@ -18,18 +18,6 @@ $findings = New-Object System.Collections.Generic.List[object]
 $limitations = New-Object System.Collections.Generic.List[string]
 $rawPath = Join-Path $OutDir 'raw\scheduled-tasks.json'
 
-function Get-TaskTriggerName {
-    param([object]$Trigger)
-    if ($null -eq $Trigger) { return '' }
-    if ($Trigger.PSObject.Properties.Name -contains 'CimClass' -and $null -ne $Trigger.CimClass) {
-        return [string]$Trigger.CimClass.CimClassName
-    }
-    if ($Trigger.PSObject.Properties.Name -contains 'TriggerType') {
-        return [string]$Trigger.TriggerType
-    }
-    return $Trigger.GetType().Name
-}
-
 $tasks = @()
 try {
     foreach ($scheduledTask in @(Get-ScheduledTask -ErrorAction Stop)) {
@@ -43,7 +31,7 @@ try {
             RunLevel = $scheduledTask.Principal.RunLevel
             Hidden = $scheduledTask.Settings.Hidden
             Actions = ($scheduledTask.Actions | ForEach-Object { Get-OpsForgeTaskActionText $_ }) -join '; '
-            Triggers = ($scheduledTask.Triggers | ForEach-Object { Get-TaskTriggerName $_ }) -join '; '
+            Triggers = ($scheduledTask.Triggers | ForEach-Object { Get-OpsForgeTaskTriggerName $_ }) -join '; '
             LastRunTime = if ($info) { $info.LastRunTime } else { $null }
             NextRunTime = if ($info) { $info.NextRunTime } else { $null }
         }

@@ -33,7 +33,7 @@ $tasks | ForEach-Object {
         UserId = $_.Principal.UserId; RunLevel = [string]$_.Principal.RunLevel
         Hidden = $_.Settings.Hidden
         Actions = ($_.Actions | ForEach-Object { Get-OpsForgeTaskActionText $_ }) -join '; '
-        Triggers = ($_.Triggers | ForEach-Object { $_.CimClass.CimClassName }) -join '; '
+        Triggers = ($_.Triggers | ForEach-Object { Get-OpsForgeTaskTriggerName $_ }) -join '; '
     }
 } | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\scheduled-tasks.json')
 

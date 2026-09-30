@@ -41,7 +41,7 @@ Save-RawJson 'scheduled-tasks' {
             UserId = $_.Principal.UserId; RunLevel = [string]$_.Principal.RunLevel
             Hidden = $_.Settings.Hidden
             Actions = ($_.Actions | ForEach-Object { Get-OpsForgeTaskActionText $_ }) -join '; '
-            Triggers = ($_.Triggers | ForEach-Object { $_.CimClass.CimClassName }) -join '; '
+            Triggers = ($_.Triggers | ForEach-Object { Get-OpsForgeTaskTriggerName $_ }) -join '; '
         }
     }
 }

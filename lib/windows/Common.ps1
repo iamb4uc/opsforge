@@ -344,3 +344,15 @@ function Get-OpsForgeTaskActionText {
 
     return $Action.GetType().Name
 }
+
+function Get-OpsForgeTaskTriggerName {
+    param([object]$Trigger)
+    if ($null -eq $Trigger) { return '' }
+    if ($Trigger.PSObject.Properties.Name -contains 'CimClass' -and $null -ne $Trigger.CimClass) {
+        return [string]$Trigger.CimClass.CimClassName
+    }
+    if ($Trigger.PSObject.Properties.Name -contains 'TriggerType') {
+        return [string]$Trigger.TriggerType
+    }
+    return $Trigger.GetType().Name
+}
