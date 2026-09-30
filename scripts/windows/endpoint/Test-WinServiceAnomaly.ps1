@@ -16,7 +16,7 @@ $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot '..\..\..')
 $OutDir = New-OpsForgeOutputDirectory -OutputPath $OutputPath -ScriptName 'Test-WinServiceAnomaly'
 $findings = New-Object System.Collections.Generic.List[object]
 $services = Get-CimInstance Win32_Service
-$services | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\services.json')
+$services | Select-Object -Property * -ExcludeProperty CimClass,CimInstanceProperties,CimSystemProperties | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\services.json')
 
 foreach ($svc in $services) {
     $path = [string]$svc.PathName

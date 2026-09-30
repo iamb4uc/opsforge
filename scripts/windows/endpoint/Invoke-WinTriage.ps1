@@ -19,26 +19,53 @@ $findings = New-Object System.Collections.Generic.List[object]
 function Save-RawJson {
     param([string]$Name, [scriptblock]$Collector)
     try {
-        & $Collector | ConvertTo-Json -Depth 7 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir "raw\$Name.json")
+        $records = & $Collector
     } catch {
         "Collector $Name failed: $($_.Exception.Message)" | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir "raw\$Name.error.txt")
+        return
     }
+    if ($null -eq $records) { $records = @() }
+    ConvertTo-Json -InputObject @($records) -Depth 7 -WarningAction Stop | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir "raw\$Name.json")
 }
 
-Save-RawJson 'os-version' { Get-CimInstance Win32_OperatingSystem }
-Save-RawJson 'local-users' { Get-LocalUser }
-Save-RawJson 'local-admins' { Get-LocalGroupMember -Group 'Administrators' }
+Save-RawJson 'os-version' { Get-CimInstance Win32_OperatingSystem | Select-Object -Property * -ExcludeProperty CimClass,CimInstanceProperties,CimSystemProperties }
+Save-RawJson 'local-users' { Get-LocalUser | Select-Object Name,FullName,Description,Enabled,LastLogon,PasswordLastSet,PasswordRequired,PrincipalSource,@{Name='SID';Expression={$_.SID.Value}} }
+Save-RawJson 'local-admins' { Get-LocalGroupMember -Group 'Administrators' | Select-Object Name,ObjectClass,PrincipalSource,@{Name='SID';Expression={$_.SID.Value}} }
 Save-RawJson 'processes' { Get-Process | Select-Object Id,ProcessName,Path,StartTime,Company,Description }
-Save-RawJson 'services' { Get-CimInstance Win32_Service }
-Save-RawJson 'scheduled-tasks' { Get-ScheduledTask }
-Save-RawJson 'startup-programs' { Get-CimInstance Win32_StartupCommand }
-Save-RawJson 'network-connections' { Get-NetTCPConnection }
-Save-RawJson 'listening-ports' { Get-NetTCPConnection | Where-Object State -eq 'Listen' }
-Save-RawJson 'firewall-profile' { Get-NetFirewallProfile }
-Save-RawJson 'hotfixes' { Get-HotFix }
-Save-RawJson 'recent-logons' { Get-WinEvent -FilterHashtable @{LogName='Security'; Id=4624} -MaxEvents 100 }
-Save-RawJson 'defender-status' { Get-MpComputerStatus }
-Save-RawJson 'event-log-summary' { Get-EventLog -List | Select-Object Log,Entries,MaximumKilobytes,OverflowAction }
+Save-RawJson 'services' { Get-CimInstance Win32_Service | Select-Object -Property * -ExcludeProperty CimClass,CimInstanceProperties,CimSystemProperties }
+Save-RawJson 'scheduled-tasks' {
+    Get-ScheduledTask | ForEach-Object {
+        [pscustomobject]@{
+            TaskName = $_.TaskName; TaskPath = $_.TaskPath; State = [string]$_.State
+            Author = $_.Author; Description = $_.Description
+            UserId = $_.Principal.UserId; RunLevel = [string]$_.Principal.RunLevel
+            Hidden = $_.Settings.Hidden
+            Actions = ($_.Actions | ForEach-Object { Get-OpsForgeTaskActionText $_ }) -join '; '
+            Triggers = ($_.Triggers | ForEach-Object { $_.CimClass.CimClassName }) -join '; '
+        }
+    }
+}
+Save-RawJson 'startup-programs' { Get-CimInstance Win32_StartupCommand | Select-Object -Property * -ExcludeProperty CimClass,CimInstanceProperties,CimSystemProperties }
+Save-RawJson 'network-connections' { Get-NetTCPConnection | Select-Object -Property * -ExcludeProperty CimClass,CimInstanceProperties,CimSystemProperties }
+Save-RawJson 'listening-ports' { Get-NetTCPConnection | Where-Object State -eq 'Listen' | Select-Object -Property * -ExcludeProperty CimClass,CimInstanceProperties,CimSystemProperties }
+Save-RawJson 'firewall-profile' { Get-NetFirewallProfile | Select-Object -Property * -ExcludeProperty CimClass,CimInstanceProperties,CimSystemProperties }
+Save-RawJson 'hotfixes' { Get-HotFix | Select-Object Source,Description,HotFixID,InstalledBy,InstalledOn,Caption,CSName,FixComments,Name,ServicePackInEffect,Status }
+Save-RawJson 'recent-logons' {
+    Get-WinEvent -FilterHashtable @{LogName='Security'; Id=4624} -MaxEvents 100 | ForEach-Object {
+        [pscustomobject]@{
+            TimeCreated = $_.TimeCreated; Id = $_.Id; RecordId = $_.RecordId
+            ProviderName = $_.ProviderName; MachineName = $_.MachineName
+            Message = $_.Message; UserId = $(if ($_.UserId) { $_.UserId.Value } else { $null })
+            Xml = $_.ToXml()
+        }
+    }
+}
+Save-RawJson 'defender-status' { Get-MpComputerStatus | Select-Object -Property * -ExcludeProperty CimClass,CimInstanceProperties,CimSystemProperties }
+Save-RawJson 'event-log-summary' {
+    Get-EventLog -List | ForEach-Object {
+        [pscustomobject]@{ Log = $_.Log; Entries = $_.Entries.Count; MaximumKilobytes = $_.MaximumKilobytes; OverflowAction = [string]$_.OverflowAction }
+    }
+}
 Save-RawJson 'installed-software' {
     Get-ItemProperty HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*,HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\* -ErrorAction SilentlyContinue |
         Select-Object DisplayName,DisplayVersion,Publisher,InstallDate

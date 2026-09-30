@@ -30,7 +30,7 @@ $filters = foreach ($rule in $rules) {
     }
 }
 
-$profiles | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\firewall-profiles.json')
+$profiles | Select-Object -Property * -ExcludeProperty CimClass,CimInstanceProperties,CimSystemProperties | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\firewall-profiles.json')
 $filters | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir 'raw\inbound-allow-rules.json')
 
 foreach ($profile in $profiles) {
