@@ -83,7 +83,7 @@ pub fn generate(root: &Path) -> Result<()> {
         ),
     )?;
     let mut rows = String::from(
-        "<table><thead><tr><th>Source</th><th>Status</th><th>Detail</th></tr></thead><tbody>",
+        "<div class=\"scroll\"><table class=\"coverage-table\"><thead><tr><th>Source</th><th>Status</th><th>Detail</th></tr></thead><tbody>",
     );
     for row in &coverage {
         rows.push_str(&format!(
@@ -94,7 +94,7 @@ pub fn generate(root: &Path) -> Result<()> {
         ));
     }
     rows.push_str(
-        "</tbody></table><p><a href=\"../normalized/coverage.jsonl\">Full coverage log</a></p>",
+        "</tbody></table></div><p><a href=\"../normalized/coverage.jsonl\">Full coverage log</a></p>",
     );
     page(root, "collection", "Collection coverage", &rows)?;
     Ok(())
@@ -220,7 +220,7 @@ fn escape(input: &str) -> String {
 
 const STYLE: &str = "*{box-sizing:border-box}body{margin:0;background:#101923;color:#e9f1f5;font:16px/1.5 system-ui,sans-serif}header,main,footer{padding:24px max(24px,calc((100vw - 1200px)/2))}header{border-bottom:1px solid #355061;background:#172633}.brand,.eyebrow{color:#59d5d0;font:700 12px/1.4 ui-monospace,monospace;letter-spacing:.15em}nav{display:flex;flex-wrap:wrap;gap:8px 24px}a{color:#59d5d0}a:focus-visible{outline:3px solid #f1bd68;outline-offset:3px}h1{font-size:clamp(2rem,5vw,4rem);line-height:1.1;margin:.25em 0 .8em}p{max-width:75ch;color:#a7bcc8}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.cards div{background:#172633;border:1px solid #355061;border-radius:8px;padding:20px}.cards strong{display:block;color:#e9f1f5;font-size:2rem}.cards span{color:#a7bcc8}.scroll{overflow-x:auto}table{width:100%;border-collapse:collapse;min-width:750px}th,td{text-align:left;vertical-align:top;padding:10px;border-bottom:1px solid #355061;overflow-wrap:anywhere}th{background:#1d3141;color:#e9f1f5}tr:nth-child(even){background:#172633}td{font:13px/1.5 ui-monospace,monospace}footer{border-top:1px solid #355061;color:#a7bcc8;font-size:13px}";
 const GRAPH_STYLE: &str = ".breakdown{margin:32px 0;padding:24px;background:#172633;border:1px solid #355061;border-radius:8px}.breakdown h2{margin:0 0 16px}.breakdown label{display:grid;grid-template-columns:1fr auto;gap:4px 20px;margin:12px 0;color:#a7bcc8}.breakdown label span{color:#e9f1f5;font-family:ui-monospace,monospace}.breakdown meter{grid-column:1/-1;width:100%;height:18px}.breakdown meter::-webkit-meter-bar{background:#1d3141;border:1px solid #355061}.breakdown meter::-webkit-meter-optimum-value{background:#59d5d0}";
-const TABLE_STYLE: &str = ".evidence-table{min-width:1600px;table-layout:fixed}.evidence-table th:nth-child(1){width:190px}.evidence-table th:nth-child(2){width:150px}.evidence-table th:nth-child(3){width:160px}.evidence-table th:nth-child(4){width:160px}.evidence-table th:nth-child(5){width:250px}.evidence-table th:nth-child(6){width:480px}.evidence-table th:nth-child(7){width:130px}.evidence-table th:nth-child(8){width:80px}";
+const TABLE_STYLE: &str = ".evidence-table{min-width:1600px;table-layout:fixed}.evidence-table th:nth-child(1){width:190px}.evidence-table th:nth-child(2){width:150px}.evidence-table th:nth-child(3){width:160px}.evidence-table th:nth-child(4){width:160px}.evidence-table th:nth-child(5){width:250px}.evidence-table th:nth-child(6){width:480px}.evidence-table th:nth-child(7){width:130px}.evidence-table th:nth-child(8){width:80px}.coverage-table th:nth-child(2),.coverage-table td:nth-child(2){white-space:nowrap}";
 
 #[cfg(test)]
 mod tests {
