@@ -27,7 +27,7 @@ the selected location must be root-owned and lack group or world write access;
 this prevents an unprivileged process from redirecting root-owned case writes.
 The cases contain:
 
-- `raw/`: copied logs, browser database snapshots, command output, packet
+- `raw/`: copied logs, browser databases and available journal files, command output, packet
   capture, and decoded packet text.
 - `normalized/events.jsonl`: one event per line, written during collection.
 - `normalized/coverage.jsonl`: source status and reason, including failures,
@@ -64,6 +64,16 @@ application by themselves. Firefox downloads, upload payloads, and binary or
 compressed imported-log formats are not decoded yet; coverage records these
 limits. No malware verdict or exfiltration conclusion is generated from weak
 signals, so `findings.json` can be empty.
+
+Browser collection preserves the database and any available SQLite WAL,
+shared-memory, and rollback journal files. Parsing uses a separate working copy
+under `normalized/`, so an open browser's exclusive database lock cannot stall
+collection or change the retained originals. SQLite checks the working copy
+before parsing; unreadable or inconsistent copies appear as failed sources.
+These live file copies are not an atomic snapshot. A browser changing its files
+during acquisition can leave gaps; acquisition coverage records this limit.
+System accounts whose home is `/` do not trigger a second device-wide browser
+scan or attribute other users' profiles to a service account.
 
 Deep inventory excludes volatile `/proc`, `/sys`, `/dev`, and `/run` trees and
 the case directory itself. Raw browser databases and packet captures can
