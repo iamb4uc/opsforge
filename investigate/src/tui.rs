@@ -148,16 +148,20 @@ fn draw(
         )
         .highlight_symbol("› ");
     frame.render_stateful_widget(list, sections[1], &mut state);
-    let footer = if let Some((_, buffer)) = input {
+    let mut footer = vec![if let Some((_, buffer)) = input {
         Line::from(vec![
             Span::styled("Edit: ", Style::default().fg(Color::Cyan)),
             Span::raw(buffer),
         ])
-    } else if error.is_empty() {
-        Line::from("↑↓ move  ·  Space toggle  ·  Enter edit/start  ·  Esc quit")
     } else {
-        Line::from(Span::styled(error, Style::default().fg(Color::Red)))
-    };
+        Line::from("↑↓ move  ·  Space toggle  ·  Enter edit/start  ·  Esc quit")
+    }];
+    if !error.is_empty() {
+        footer.push(Line::from(Span::styled(
+            error,
+            Style::default().fg(Color::Red),
+        )));
+    }
     frame.render_widget(
         Paragraph::new(footer).block(Block::default().borders(Borders::TOP)),
         sections[2],
@@ -191,4 +195,31 @@ pub fn run_progress(config: &RunConfig) -> Result<PathBuf> {
             frame.render_widget(Paragraph::new(lines.join("\n")), inner);
         });
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::draw;
+    use crate::config::RunConfig;
+    use ratatui::{Terminal, backend::TestBackend};
+
+    #[test]
+    fn invalid_duration_error_stays_visible_while_editing() {
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("terminal");
+        let config = RunConfig::default_for("/var/lib/opsforge/cases".into());
+        let input = Some((6, "1w".into()));
+        let error = "capture duration unit must be s, m, h, or d";
+        terminal
+            .draw(|frame| draw(frame, &config, 6, input.as_ref(), error))
+            .expect("draw");
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(text.contains("Edit: 1w"));
+        assert!(text.contains(error));
+    }
 }
