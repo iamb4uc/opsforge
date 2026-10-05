@@ -22,6 +22,7 @@ pub fn run(config: &RunConfig, progress: &impl Fn(&str)) -> Result<PathBuf> {
         root.join("case-info.json"),
         serde_json::to_vec_pretty(&serde_json::json!({
             "tool": "opsforge-investigate",
+            "case_id": root.file_name().unwrap_or_default().to_string_lossy(),
             "version": env!("CARGO_PKG_VERSION"),
             "started_at": jiff::Timestamp::now().to_string(),
             "operator": std::env::var("SUDO_USER").or_else(|_| std::env::var("USER")).unwrap_or_else(|_| "unknown".into()),
@@ -100,6 +101,10 @@ pub fn run(config: &RunConfig, progress: &impl Fn(&str)) -> Result<PathBuf> {
         })?;
     }
     if config.exfil || config.downloads {
+        progress("Collecting retained application transfer logs");
+        source(&mut case, "application-transfer-logs", |case| {
+            collect_application_logs(case, progress)
+        })?;
         progress("Collecting browser activity and downloads");
         source(&mut case, "browser-profiles", |case| {
             crate::browser::collect(case, progress)
@@ -109,7 +114,7 @@ pub fn run(config: &RunConfig, progress: &impl Fn(&str)) -> Result<PathBuf> {
     for (index, path) in config.imports.iter().enumerate() {
         progress(&format!("Importing {}", path.display()));
         source(&mut case, &path.display().to_string(), |case| {
-            import_path(case, path, index, progress)
+            import_path(case, path, &format!("import-{index:03}"), progress)
         })?;
     }
     if config.deep_inventory {
@@ -232,12 +237,22 @@ fn normalize_sockets(case: &mut Case) -> Result<()> {
             detail: line,
             evidence: "raw/active-sockets.txt".into(),
             level: EvidenceLevel::Observed,
+            transfer: None,
+            evidence_line: None,
         })?;
     }
     Ok(())
 }
 
 fn collect_journal(case: &mut Case, progress: &impl Fn(&str)) -> Result<()> {
+    let users: std::collections::HashMap<String, String> = fs::read_to_string("/etc/passwd")
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| {
+            let fields: Vec<_> = line.split(':').collect();
+            (fields.len() >= 3).then(|| (fields[2].to_owned(), fields[0].to_owned()))
+        })
+        .collect();
     if !command_exists("journalctl") {
         case.coverage(&Coverage {
             source: "journal".into(),
@@ -283,14 +298,18 @@ fn collect_journal(case: &mut Case, progress: &impl Fn(&str)) -> Result<()> {
             source: "journal".into(),
             kind: if network { "network-lead" } else { "journal" }.into(),
             application: app,
-            user: record
-                .get("_UID")
-                .and_then(Value::as_str)
-                .map(str::to_owned),
+            user: record.get("_UID").and_then(Value::as_str).map(|uid| {
+                users.get(uid).map_or_else(
+                    || format!("UID {uid}"),
+                    |name| format!("{name} (current passwd name for UID {uid})"),
+                )
+            }),
             destination: None,
             detail: message.to_owned(),
             evidence: "raw/journal.jsonl".into(),
             level: EvidenceLevel::Lead,
+            transfer: None,
+            evidence_line: Some(count + 1),
         })?;
         count = count.saturating_add(1);
         if count.is_multiple_of(10_000) {
@@ -340,7 +359,7 @@ fn collect_logs(case: &mut Case, progress: &impl Fn(&str)) -> Result<()> {
             Ok(_) => {
                 count = count.saturating_add(1);
                 let raw = case.root.join("raw").join(&name);
-                let parsed = normalize_text_log(case, &raw, &name, "system-log");
+                let parsed = normalize_text_log(case, &raw, &name, "system-log", entry.path());
                 case.coverage(&Coverage {
                     source: entry.path().display().to_string(),
                     state: if parsed.is_ok() {
@@ -381,7 +400,7 @@ fn collect_logs(case: &mut Case, progress: &impl Fn(&str)) -> Result<()> {
     Ok(())
 }
 
-fn import_path(case: &mut Case, path: &Path, index: usize, progress: &impl Fn(&str)) -> Result<()> {
+fn import_path(case: &mut Case, path: &Path, prefix: &str, progress: &impl Fn(&str)) -> Result<()> {
     if !path.exists() {
         case.coverage(&Coverage {
             source: path.display().to_string(),
@@ -409,7 +428,7 @@ fn import_path(case: &mut Case, path: &Path, index: usize, progress: &impl Fn(&s
         if !entry.file_type().is_file() {
             continue;
         }
-        let name = format!("import-{index:03}-{attempted:06}");
+        let name = format!("{prefix}-{attempted:06}");
         attempted = attempted.saturating_add(1);
         if let Err(error) = case.copy_evidence(entry.path(), &name) {
             failed = failed.saturating_add(1);
@@ -421,7 +440,7 @@ fn import_path(case: &mut Case, path: &Path, index: usize, progress: &impl Fn(&s
             continue;
         }
         let raw = case.root.join("raw").join(&name);
-        let parsed = normalize_text_log(case, &raw, &name, "imported-log");
+        let parsed = normalize_text_log(case, &raw, &name, "imported-log", entry.path());
         case.coverage(&Coverage {
             source: entry.path().display().to_string(),
             state: if parsed.is_ok() {
@@ -436,7 +455,7 @@ fn import_path(case: &mut Case, path: &Path, index: usize, progress: &impl Fn(&s
         })?;
         count = count.saturating_add(1);
         if count.is_multiple_of(100) {
-            progress(&format!("Import {index}: {count} files saved"));
+            progress(&format!("{prefix}: {count} files saved"));
         }
     }
     case.coverage(&Coverage {
@@ -455,10 +474,90 @@ fn import_path(case: &mut Case, path: &Path, index: usize, progress: &impl Fn(&s
     Ok(())
 }
 
-fn normalize_text_log(case: &mut Case, raw: &Path, name: &str, source: &str) -> Result<u64> {
+fn collect_application_logs(case: &mut Case, progress: &impl Fn(&str)) -> Result<()> {
+    let passwd = fs::read_to_string("/etc/passwd")?;
+    let mut paths = std::collections::BTreeSet::new();
+    for line in passwd.lines() {
+        let fields: Vec<_> = line.split(':').collect();
+        if fields.len() < 6 || fields[5] == "/" {
+            continue;
+        }
+        let home = Path::new(fields[5]);
+        for relative in [
+            ".cache/rclone",
+            ".local/state/rclone",
+            ".local/share/rclone",
+            ".config/rclone/logs",
+        ] {
+            let directory = home.join(relative);
+            if !directory.is_dir() {
+                continue;
+            }
+            for entry in WalkDir::new(directory).follow_links(false).max_depth(3) {
+                match entry {
+                    Ok(entry)
+                        if entry.file_type().is_file()
+                            && matches!(
+                                entry.path().extension().and_then(|ext| ext.to_str()),
+                                Some("log" | "jsonl")
+                            ) =>
+                    {
+                        paths.insert(entry.path().to_path_buf());
+                    }
+                    Err(error) => case.coverage(&Coverage {
+                        source: "application-transfer-logs".into(),
+                        state: CoverageState::Failed,
+                        detail: error.to_string(),
+                    })?,
+                    _ => {}
+                }
+            }
+        }
+        for relative in ["rclone.log", ".cache/rclone.log"] {
+            let path = home.join(relative);
+            if path.is_file() {
+                paths.insert(path);
+            }
+        }
+    }
+    for (index, path) in paths.iter().enumerate() {
+        import_path(case, path, &format!("application-{index:03}"), progress)?;
+    }
+    case.coverage(&Coverage { source: "application-transfer-logs".into(), state: if paths.is_empty() { CoverageState::Empty } else { CoverageState::Collected }, detail: format!("{} rclone log paths found in documented user locations; use --import for other locations or application logs; logging may never have been enabled", paths.len()) })?;
+    Ok(())
+}
+
+fn normalize_text_log(
+    case: &mut Case,
+    raw: &Path,
+    name: &str,
+    source: &str,
+    original: &Path,
+) -> Result<u64> {
+    if original
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("har"))
+    {
+        let document: Value = serde_json::from_reader(BufReader::new(File::open(raw)?))?;
+        let events = crate::transfers::har_events(&document, &format!("raw/{name}"))
+            .context("HAR log.entries schema not recognized")?;
+        let count = u64::try_from(events.len())?;
+        for event in events {
+            case.event(&event)?;
+        }
+        return Ok(count);
+    }
     let mut count = 0_u64;
+    let mut parser = crate::transfers::Parser::default();
     for line in BufReader::new(File::open(raw)?).lines() {
         let line = line?;
+        count = count.saturating_add(1);
+        if let Some(mut event) = parser.parse(&line, source, &format!("raw/{name}")) {
+            event.evidence_line = Some(count);
+            case.event(&event)?;
+            continue;
+        }
         let lower = line.to_ascii_lowercase();
         let network = [
             "upload", "download", "post ", "put ", "connect", "dns", "vpn", "src=", "dst=",
@@ -481,8 +580,9 @@ fn normalize_text_log(case: &mut Case, raw: &Path, name: &str, source: &str) -> 
             detail: line,
             evidence: format!("raw/{name}"),
             level: EvidenceLevel::Lead,
+            transfer: None,
+            evidence_line: Some(count),
         })?;
-        count = count.saturating_add(1);
     }
     Ok(count)
 }
@@ -676,15 +776,26 @@ fn normalize_pcap(case: &mut Case, pcap: &Path) -> Result<()> {
         let line = line?;
         writeln!(raw, "{line}")?;
         case.event(&Event {
-            timestamp: None,
+            timestamp: {
+                let mut fields = line.split_whitespace();
+                fields
+                    .next()
+                    .zip(fields.next())
+                    .map(|(date, time)| format!("{date}T{time}"))
+            },
             source: "live-traffic".into(),
             kind: "packet".into(),
             application: None,
             user: None,
-            destination: None,
+            destination: line
+                .split_once(" > ")
+                .and_then(|(_, tail)| tail.split_whitespace().next())
+                .map(|endpoint| endpoint.trim_end_matches(':').to_owned()),
             detail: line,
             evidence: "raw/live-traffic-summary.txt".into(),
             level: EvidenceLevel::Observed,
+            transfer: None,
+            evidence_line: Some(count + 1),
         })?;
         count = count.saturating_add(1);
     }
