@@ -1,6 +1,6 @@
 use crate::case::{Case, Coverage, CoverageState, Event, EvidenceLevel};
-use anyhow::Result;
-use rusqlite::{Connection, OpenFlags, backup::Backup};
+use anyhow::{Context, Result, bail};
+use rusqlite::Connection;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -46,10 +46,8 @@ pub fn collect(case: &mut Case, progress: &impl Fn(&str)) -> Result<()> {
             found = found.saturating_add(1);
             progress(&format!("Browser profile: {}", entry.path().display()));
             let raw = format!("browser-{found:05}.sqlite");
-            let result = snapshot(entry.path(), &case.root.join("raw").join(&raw)).and_then(|db| {
-                case.record_existing(&entry.path().display().to_string(), &raw)?;
-                parse_history(case, &db, &user, &raw, firefox)
-            });
+            let result = snapshot(case, entry.path(), &raw)
+                .and_then(|db| parse_history(case, &db, &user, &raw, firefox));
             match result {
                 Ok(count) => case.coverage(&Coverage {
                     source: entry.path().display().to_string(),
@@ -92,7 +90,10 @@ fn user_homes() -> Result<Vec<(String, PathBuf)>> {
         let parts: Vec<_> = line.split(':').collect();
         if let (Some(user), Some(home)) = (parts.first(), parts.get(5)) {
             let home = PathBuf::from(home);
-            if home.is_dir() && !homes.iter().any(|(_, known)| known == &home) {
+            if home != Path::new("/")
+                && home.is_dir()
+                && !homes.iter().any(|(_, known)| known == &home)
+            {
                 homes.push(((*user).to_owned(), home));
             }
         }
@@ -100,13 +101,39 @@ fn user_homes() -> Result<Vec<(String, PathBuf)>> {
     Ok(homes)
 }
 
-fn snapshot(source: &Path, destination: &Path) -> Result<Connection> {
-    let from = Connection::open_with_flags(source, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-    let mut to = Connection::open(destination)?;
-    let backup = Backup::new(&from, &mut to)?;
-    backup.run_to_completion(100, Duration::from_millis(50), None)?;
-    drop(backup);
-    Ok(to)
+fn snapshot(case: &mut Case, source: &Path, name: &str) -> Result<Connection> {
+    let working = case.root.join("normalized").join(name);
+    let raw = case.copy_evidence(source, name)?;
+    fs::copy(raw, &working)?;
+    for suffix in ["-wal", "-shm", "-journal"] {
+        let mut source_sidecar = source.as_os_str().to_os_string();
+        source_sidecar.push(suffix);
+        let source_sidecar = PathBuf::from(source_sidecar);
+        match fs::metadata(&source_sidecar) {
+            Ok(_) => {
+                let sidecar_name = format!("{name}{suffix}");
+                let raw = case.copy_evidence(&source_sidecar, &sidecar_name)?;
+                // SQLite rebuilds shared memory for the isolated working copy.
+                if suffix != "-shm" {
+                    fs::copy(raw, working.with_file_name(sidecar_name))?;
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error).context("checking browser journal files"),
+        }
+    }
+    case.coverage(&Coverage {
+        source: format!("{}:acquisition", source.display()),
+        state: CoverageState::Collected,
+        detail: "database and available WAL, shared-memory, and rollback journal files preserved; parsing uses an isolated copy; live file copies are not an atomic snapshot".into(),
+    })?;
+    let db = Connection::open(working)?;
+    db.busy_timeout(Duration::from_millis(250))?;
+    let check: String = db.query_row("PRAGMA quick_check", [], |row| row.get(0))?;
+    if check != "ok" {
+        bail!("browser working copy failed SQLite quick_check: {check}");
+    }
+    Ok(db)
 }
 
 fn parse_history(
@@ -221,10 +248,48 @@ fn parse_history(
 
 #[cfg(test)]
 mod tests {
-    use super::parse_history;
+    use super::{parse_history, snapshot};
     use crate::case::Case;
     use rusqlite::Connection;
     use std::fs;
+
+    #[test]
+    fn acquires_an_exclusively_locked_browser_and_preserves_wal() {
+        let base =
+            std::env::temp_dir().join(format!("opsforge-live-browser-{}", std::process::id()));
+        fs::create_dir_all(&base).expect("base");
+        let source = base.join("History");
+        let browser = Connection::open(&source).expect("browser database");
+        browser.execute_batch("PRAGMA journal_mode=WAL; PRAGMA locking_mode=EXCLUSIVE; PRAGMA wal_autocheckpoint=0; CREATE TABLE visits(visit_time INTEGER,url INTEGER); CREATE TABLE urls(id INTEGER,url TEXT,title TEXT); INSERT INTO urls VALUES(1,'http://lab.test/','lab'); INSERT INTO visits VALUES(11644473600000000,1);").expect("live browser records");
+        let original = fs::read(&source).expect("source bytes");
+        let wal = fs::read(base.join("History-wal")).expect("WAL bytes");
+        let mut case = Case::new(&base).expect("case");
+        let copy =
+            snapshot(&mut case, &source, "browser-00001.sqlite").expect("locked acquisition");
+        assert_eq!(
+            copy.query_row("SELECT url FROM urls", [], |row| row.get::<_, String>(0))
+                .expect("WAL record"),
+            "http://lab.test/"
+        );
+        parse_history(&mut case, &copy, "operator", "browser-00001.sqlite", false).expect("parse");
+        assert_eq!(
+            fs::read(case.root.join("raw/browser-00001.sqlite")).expect("raw"),
+            original
+        );
+        assert_eq!(
+            fs::read(case.root.join("raw/browser-00001.sqlite-wal")).expect("raw WAL"),
+            wal
+        );
+        assert_eq!(fs::read(&source).expect("source unchanged"), original);
+        assert!(
+            fs::read_to_string(case.root.join("manifest.jsonl"))
+                .expect("manifest")
+                .contains("browser-00001.sqlite-wal")
+        );
+        drop(copy);
+        drop(browser);
+        fs::remove_dir_all(base).expect("remove fixture");
+    }
 
     #[test]
     fn chromium_download_keeps_origin_and_local_path() {
