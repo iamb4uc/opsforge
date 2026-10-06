@@ -180,6 +180,8 @@ fn parse_history(
             detail: title,
             evidence: format!("raw/{raw}"),
             level: EvidenceLevel::Lead,
+            transfer: None,
+            evidence_line: None,
         })?;
         count = count.saturating_add(1);
     }
@@ -225,10 +227,23 @@ fn parse_history(
                 kind: "download".into(),
                 application: Some("Chromium-family".into()),
                 user: Some(user.into()),
-                destination: Some(path),
+                destination: Some(path.clone()),
                 detail: format!("source {url}; received {received} of {total} bytes"),
                 evidence: format!("raw/{raw}"),
                 level: EvidenceLevel::Recorded,
+                transfer: Some(crate::case::Transfer {
+                    direction: "download".into(),
+                    status: "recorded".into(),
+                    protocol: "browser".into(),
+                    perspective: "client".into(),
+                    file: Some(path),
+                    target: (!url.is_empty()).then_some(url),
+                    peer: None,
+                    bytes: u64::try_from(received).ok(),
+                    bytes_basis: "received bytes; completion state not decoded".into(),
+                    method: None,
+                }),
+                evidence_line: None,
             })?;
             download_count = download_count.saturating_add(1);
             count = count.saturating_add(1);

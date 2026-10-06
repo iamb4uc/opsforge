@@ -26,10 +26,12 @@ fn imported_log_reaches_offline_report_with_escaped_text() {
     config.imports.push(imported);
     let root = collect::run(&config, &|_| {}).expect("case run");
     let events = fs::read_to_string(root.join("normalized/events.jsonl")).expect("events");
-    let page = fs::read_to_string(root.join("dashboard/exfil.html")).expect("dashboard");
+    let page = fs::read_to_string(root.join("dashboard/network.html")).expect("dashboard");
+    let data = fs::read_to_string(root.join("dashboard/events.js")).expect("event data");
     assert!(events.contains("network-lead"));
-    assert!(page.contains("&lt;script&gt;"));
-    assert!(!page.contains("<script>"));
+    assert!(data.contains("\\u003cscript\\u003e"));
+    assert!(!data.contains("<script>"));
+    assert!(page.contains("script-src 'self'"));
     assert!(root.join("raw/import-000-000000").exists());
     assert!(root.join("findings.json").exists());
     assert!(root.join("completion.json").exists());

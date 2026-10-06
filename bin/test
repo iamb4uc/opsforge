@@ -231,7 +231,7 @@ test_forbidden_files() {
       -name '*.py' -o -name '*.go' -o -name '*.rs' -o -name '*.js' -o \
       -name '*.ts' -o -name '*.rb' -o -name '*.pl' -o -name '*.exe' -o \
       -name '*.dll' -o -name '*.so' -o -name '*.dylib' \
-    \) ! \( -path "$ROOT/investigate/src/*.rs" -o -path "$ROOT/investigate/tests/*.rs" \) -print)"
+    \) ! \( -path "$ROOT/investigate/src/*.rs" -o -path "$ROOT/investigate/tests/*.rs" -o -path "$ROOT/investigate/src/dashboard.js" \) -print)"
   [ -z "$files" ] || fail "forbidden core language or binary files found: $files"
 }
 

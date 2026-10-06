@@ -40,11 +40,16 @@ The cases contain:
   completion marker, and hashes of the finished case files. An interrupted
   case keeps saved evidence but has no completion marker.
 - `findings.json`, `report.md`, `summary.txt`, and `dashboard/` with Overview,
-  Exfiltration, Timeline, Downloads, and Coverage HTML pages.
+  Uploads, Timeline, Downloads, Network, Coverage, and Evidence HTML pages.
 
-The dashboard opens locally without a server. It shows a bounded sample of
-events so large journals do not exhaust report memory; JSONL retains every
-normalized row. Keep the whole case directory when sharing it. The bootstrap
+The dashboard opens locally without a server or external assets. Its local
+JavaScript data contains every normalized event; search, application/source/outcome
+filters, UTC time ranges and pagination work across the complete case. Report
+generation streams events to disk; the browser loads the full event dataset into
+memory and renders only one page at a time. Large cases need enough browser memory.
+Packet summaries are hidden initially in Timeline and remain available in Network
+or with the timeline checkbox. Raw references show the original source path and
+line number or HAR entry index. Keep the whole case directory when sharing it. The bootstrap
 removes only its temporary files. It does not compress or remove the case.
 
 ## Sources and interpretation
@@ -64,6 +69,49 @@ application by themselves. Firefox downloads, upload payloads, and binary or
 compressed imported-log formats are not decoded yet; coverage records these
 limits. No malware verdict or exfiltration conclusion is generated from weak
 signals, so `findings.json` can be empty.
+
+## Upload and download records
+
+The Uploads page separates completed file-transfer records, accepted HTTP
+requests and failed/incomplete attempts. Counts are records, not unique files;
+the same transfer can appear in both client and server logs. An inbound upload
+to an investigated FTP/HTTP server is not an outbound exfiltration event.
+
+Supported retained sources:
+
+- Standard FTP `xferlog`: file path, transferred bytes, peer, logged identity,
+  incoming/outgoing direction and completion indicator. The source is a server;
+  local timestamps lack a timezone, and spaces in file names become underscores.
+- rclone JSON logs: recorded object name and copy outcome. Direction and remote
+  destination require retained command context plus a recognized network backend
+  record. Without them, direction stays unknown. Flags before positional arguments,
+  copyto/moveto, mixed concurrent runs and logs lacking that context are not assigned
+  upload/download direction. Byte counts remain unknown unless logged per object.
+  Named remotes alone are not assumed to be network destinations.
+- HTTP combined and JSON access logs: PUT/POST/PATCH upload requests and GET
+  download requests, target, time, user/peer when logged and response outcome.
+  `request_length` includes headers; response bytes are not upload bytes. These
+  formats generally do not retain the original local file name or payload.
+- Imported `.har` archives: request URL/method/time, response outcome and uploaded
+  `postData.params[].fileName` when retained. Each named file gets a record; request
+  body bytes are not divided among files. Negative/missing sizes remain unknown.
+  A HAR must already exist; ordinary browser history does not retain these fields.
+- Chromium download metadata: local path, source URL when available and received
+  bytes. Completion state is not inferred from matching byte counts.
+
+`/var/log` transfer logs are collected with system logs. rclone `.log`/`.jsonl`
+files are also discovered under user `.cache/rclone`, `.local/state/rclone`,
+`.local/share/rclone`, `.config/rclone/logs` (depth 3), `~/rclone.log` and
+`~/.cache/rclone.log`. Other locations and HAR archives can be selected in the TUI
+or passed with repeated `--import PATH`. No logging is enabled on the source device;
+missing records remain explicit coverage gaps. Uploaded file contents are recovered
+only when independently retained; a file name does not imply payload recovery.
+
+Format references: [NGINX access logging](https://docs.nginx.com/nginx/admin-guide/monitoring/logging/),
+[NGINX byte variables](https://nginx.org/en/docs/http/ngx_http_core_module.html),
+[rclone JSON logging](https://rclone.org/docs/#use-json-log),
+[vsftpd transfer logging](https://security.appspot.com/vsftpd/vsftpd_conf.html),
+and [HAR request metadata](https://w3c.github.io/web-performance/specs/HAR/Overview.html).
 
 Browser collection preserves the database and any available SQLite WAL,
 shared-memory, and rollback journal files. Parsing uses a separate working copy

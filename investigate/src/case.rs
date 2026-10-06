@@ -28,6 +28,24 @@ pub struct Event {
     pub detail: String,
     pub evidence: String,
     pub level: EvidenceLevel,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transfer: Option<Transfer>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence_line: Option<u64>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Transfer {
+    pub direction: String,
+    pub status: String,
+    pub protocol: String,
+    pub perspective: String,
+    pub file: Option<String>,
+    pub target: Option<String>,
+    pub peer: Option<String>,
+    pub bytes: Option<u64>,
+    pub bytes_basis: String,
+    pub method: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
@@ -264,6 +282,8 @@ mod tests {
             detail: "network activity".into(),
             evidence: "raw/sample.log".into(),
             level: EvidenceLevel::Unattributed,
+            transfer: None,
+            evidence_line: None,
         })
         .expect("event");
         assert_eq!(
