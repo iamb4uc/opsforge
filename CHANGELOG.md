@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.7.0
+
+- Added retained FTP, rclone, HTTP access-log and HAR upload/download records
+  with file names, endpoints, outcomes, byte basis and raw evidence references.
+- Replaced the dashboard with seven classic HTML pages, complete-case search,
+  filters, pagination and an evidence index.
+- Kept client/server direction, source-local timestamps and missing fields
+  explicit; ordinary browser visits remain leads rather than upload proof.
+
 ## v0.6.0
 
 - Added a Linux investigator with guided setup, source coverage, and a shareable
