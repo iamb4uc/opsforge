@@ -49,6 +49,9 @@
     }
   }
   const selectedStatus = new URLSearchParams(location.search).get("status");
+  if (["completed", "failed"].includes(selectedStatus) && ![...$("status").options].some((option) => option.value === selectedStatus)) {
+    const option = el("option", selectedStatus); option.value = selectedStatus; $("status").append(option);
+  }
   if (selectedStatus && [...$("status").options].some((option) => option.value === selectedStatus)) $("status").value = selectedStatus;
   const headings = coverageView ? ["Source", "Status", "Detail"] : evidenceView ? ["Original source", "Acquired", "Bytes", "SHA-256", "Retained raw file"] : transferView ? ["Time", "Application / user", "File / object", "Destination / peer", "Bytes", "Outcome", "Direction / perspective", "Evidence"] : ["Time", "Application / user", "Activity", "Destination / path", "Detail", "Evidence"];
   const header = el("tr");
