@@ -25,6 +25,7 @@ jobs:
           cargo +1.93.0 clippy --locked --manifest-path investigate/Cargo.toml --all-targets -- -D warnings
           cargo +1.93.0 test --locked --manifest-path investigate/Cargo.toml
           cargo +1.93.0 build --locked --manifest-path investigate/Cargo.toml
+          node --check investigate/src/dashboard.js
           bash -n investigate/install-and-run.sh
           shellcheck investigate/install-and-run.sh
           investigate/install-and-run.sh --help
