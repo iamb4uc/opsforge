@@ -96,6 +96,9 @@ impl Parser {
             evidence_line: None,
         };
         if let Ok(record) = serde_json::from_str::<Value>(line) {
+            if syncthing_record(&record, &mut event).is_some() {
+                return Some(event);
+            }
             if record.get("msg").is_some()
                 && (record.get("objectType").is_some()
                     || record
@@ -307,6 +310,88 @@ impl Parser {
         });
         Some(event)
     }
+}
+
+fn syncthing_record(record: &Value, event: &mut Event) -> Option<()> {
+    if ["request_method", "method", "request"]
+        .iter()
+        .any(|field| record.get(field).is_some())
+    {
+        return None;
+    }
+    record.get("id")?.as_u64()?;
+    if let Some(global_id) = record.get("globalID") {
+        global_id.as_u64()?;
+    }
+    let kind = record.get("type")?.as_str()?;
+    let timestamp = record.get("time")?.as_str()?;
+    let data = record.get("data")?.as_object()?;
+    let (activity, destination, limits) = match kind {
+        "ItemStarted" | "ItemFinished" => {
+            let folder = data.get("folder")?.as_str()?;
+            let item = data.get("item")?.as_str()?;
+            let item_type = data.get("type")?.as_str()?;
+            let action = data.get("action")?.as_str()?;
+            if !matches!(action, "update" | "metadata" | "delete")
+                || !matches!(item_type, "file" | "dir" | "symlink")
+            {
+                return None;
+            }
+            let outcome = if kind == "ItemStarted" {
+                "started"
+            } else {
+                match data.get("error") {
+                    Some(Value::Null) => "completed",
+                    Some(Value::String(error)) if !error.is_empty() => "failed",
+                    _ => "unknown",
+                }
+            };
+            (
+                format!("sync-{item_type}-{action}-{outcome}"),
+                Some(format!("folder {folder}: {item}")),
+                "Local synchronization operation; this can reuse local blocks. Network direction, transferred bytes, originating peer and outbound upload completion are not established.",
+            )
+        }
+        "StateChanged" => {
+            let folder = data.get("folder")?.as_str()?;
+            let state = data.get("to")?.as_str()?;
+            (
+                format!("sync-state-{state}"),
+                Some(format!("folder {folder}")),
+                "Retained local folder state; state duration is not a transfer duration, and idle does not prove an upload completed. Any error remains tied to this event time.",
+            )
+        }
+        "FolderErrors" => {
+            let folder = data.get("folder")?.as_str()?;
+            data.get("errors")?.as_array()?;
+            (
+                "sync-folder-errors".into(),
+                Some(format!("folder {folder}")),
+                "Retained local file/directory error list; a later syncing state makes this list obsolete. This does not establish a failed outbound transfer.",
+            )
+        }
+        "DeviceConnected" | "DeviceDisconnected" => {
+            let device = data.get("id")?.as_str()?;
+            let destination = data.get("addr").and_then(Value::as_str).unwrap_or(device);
+            (
+                (if kind == "DeviceConnected" {
+                    "active-connection"
+                } else {
+                    "connection-closed"
+                })
+                .into(),
+                Some(destination.into()),
+                "Retained device connection event; a connection or disconnection does not establish file transfer or bytes. A disconnection reason is not automatically a failed transfer.",
+            )
+        }
+        _ => return None,
+    };
+    event.timestamp = Some(timestamp.into());
+    event.application = Some("Syncthing".into());
+    event.kind = activity;
+    event.destination = destination;
+    event.detail = format!("{limits}\n{}", event.detail);
+    Some(())
 }
 
 fn rclone_arguments(args: &[String]) -> Option<(String, String, bool)> {
@@ -559,6 +644,103 @@ pub fn har_events(record: &Value, raw: &str) -> Option<Vec<Event>> {
 mod tests {
     use super::{Parser, har_events};
     use serde_json::json;
+
+    #[test]
+    fn syncthing_audit_keeps_local_operations_separate_from_network_transfers() {
+        let mut parser = Parser::default();
+        for (kind, action, error, expected) in [
+            (
+                "ItemStarted",
+                "update",
+                json!(null),
+                "sync-file-update-started",
+            ),
+            (
+                "ItemFinished",
+                "update",
+                json!(null),
+                "sync-file-update-completed",
+            ),
+            (
+                "ItemFinished",
+                "metadata",
+                json!(null),
+                "sync-file-metadata-completed",
+            ),
+            (
+                "ItemFinished",
+                "delete",
+                json!("permission denied"),
+                "sync-file-delete-failed",
+            ),
+            (
+                "ItemFinished",
+                "update",
+                json!(""),
+                "sync-file-update-unknown",
+            ),
+        ] {
+            let record = json!({"id":1,"globalID":2,"type":kind,"time":"2026-10-09T00:00:00Z","data":{"folder":"lab","item":"file with spaces.txt","type":"file","action":action,"error":error}});
+            let event = parser
+                .parse(&record.to_string(), "audit", "raw/audit")
+                .expect("event");
+            assert_eq!(event.kind, expected);
+            assert_eq!(event.application.as_deref(), Some("Syncthing"));
+            assert_eq!(
+                event.destination.as_deref(),
+                Some("folder lab: file with spaces.txt")
+            );
+            assert!(event.transfer.is_none());
+            assert!(event.detail.contains("reuse local blocks"));
+        }
+        for (kind, expected) in [
+            ("DeviceConnected", "active-connection"),
+            ("DeviceDisconnected", "connection-closed"),
+        ] {
+            let record = json!({"id":1,"globalID":2,"type":kind,"time":"2026-10-09T00:00:00Z","data":{"id":"device-id","addr":"127.0.0.1:22000","error":"unexpected EOF"}});
+            let event = parser
+                .parse(&record.to_string(), "audit", "raw/audit")
+                .expect("connection");
+            assert_eq!(event.kind, expected);
+            assert_eq!(event.destination.as_deref(), Some("127.0.0.1:22000"));
+            assert!(event.transfer.is_none());
+        }
+        assert!(
+            parser
+                .parse(
+                    r#"{"type":"ItemFinished","data":{"item":"file"}}"#,
+                    "audit",
+                    "raw/audit"
+                )
+                .is_none()
+        );
+        let http = json!({"id":1,"globalID":1,"type":"ItemFinished","time":"2026-10-09T00:00:00Z","data":{"folder":"lab","item":"file","type":"file","action":"update","error":null},"method":"POST","uri":"/upload","status":201});
+        assert_eq!(
+            parser
+                .parse(&http.to_string(), "log", "raw/log")
+                .expect("HTTP record")
+                .application
+                .as_deref(),
+            Some("HTTP server")
+        );
+        for (record, expected) in [
+            (
+                json!({"id":1,"type":"FolderErrors","time":"2026-10-09T00:00:00Z","data":{"folder":"lab","errors":[{"path":"file.txt","error":"permission denied"}]}}),
+                "sync-folder-errors",
+            ),
+            (
+                json!({"id":1,"globalID":1,"type":"StateChanged","time":"2026-10-09T00:00:00Z","data":{"folder":"lab","from":"idle","to":"error","error":"permission denied","duration":1}}),
+                "sync-state-error",
+            ),
+        ] {
+            let event = parser
+                .parse(&record.to_string(), "audit", "raw/audit")
+                .expect("folder event");
+            assert_eq!(event.kind, expected);
+            assert!(event.detail.contains("permission denied"));
+            assert!(event.transfer.is_none());
+        }
+    }
 
     #[test]
     fn sftp_counts_keep_server_perspective_and_unknown_completion() {
