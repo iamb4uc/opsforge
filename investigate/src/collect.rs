@@ -5,7 +5,7 @@ use crate::{
 use anyhow::{Context, Result};
 use serde_json::Value;
 use std::{
-    fs::{self, File},
+    fs::{self, File, OpenOptions},
     io::{BufRead, BufReader, BufWriter, Write},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
@@ -362,16 +362,19 @@ fn collect_logs(case: &mut Case, progress: &impl Fn(&str)) -> Result<()> {
                 let raw = case.root.join("raw").join(&name);
                 let parsed =
                     normalize_text_log(case, &raw, &name, "system-log", entry.path(), None);
+                let state = normalization_state(&parsed);
+                if !matches!(
+                    state,
+                    CoverageState::Collected | CoverageState::Empty | CoverageState::Unsupported
+                ) {
+                    failed = failed.saturating_add(1);
+                }
                 case.coverage(&Coverage {
                     source: entry.path().display().to_string(),
-                    state: if parsed.is_ok() {
-                        CoverageState::Collected
-                    } else {
-                        CoverageState::Unsupported
-                    },
+                    state,
                     detail: match parsed {
                         Ok(lines) => format!("{lines} text records normalized"),
-                        Err(error) => format!("raw preserved; text parser unavailable: {error}"),
+                        Err(error) => format!("raw preserved; normalization error: {error}"),
                     },
                 })?;
             }
@@ -443,16 +446,19 @@ fn import_path(case: &mut Case, path: &Path, prefix: &str, progress: &impl Fn(&s
         }
         let raw = case.root.join("raw").join(&name);
         let parsed = normalize_text_log(case, &raw, &name, "imported-log", entry.path(), None);
+        let state = normalization_state(&parsed);
+        if !matches!(
+            state,
+            CoverageState::Collected | CoverageState::Empty | CoverageState::Unsupported
+        ) {
+            failed = failed.saturating_add(1);
+        }
         case.coverage(&Coverage {
             source: entry.path().display().to_string(),
-            state: if parsed.is_ok() {
-                CoverageState::Collected
-            } else {
-                CoverageState::Unsupported
-            },
+            state,
             detail: match parsed {
                 Ok(lines) => format!("{lines} text records normalized"),
-                Err(error) => format!("raw preserved; text parser unavailable: {error}"),
+                Err(error) => format!("raw preserved; normalization error: {error}"),
             },
         })?;
         count = count.saturating_add(1);
@@ -476,6 +482,21 @@ fn import_path(case: &mut Case, path: &Path, prefix: &str, progress: &impl Fn(&s
     Ok(())
 }
 
+fn normalization_state(result: &Result<u64>) -> CoverageState {
+    match result {
+        Ok(0) => CoverageState::Empty,
+        Ok(_) => CoverageState::Collected,
+        Err(error)
+            if error
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|error| error.kind() == std::io::ErrorKind::InvalidData) =>
+        {
+            CoverageState::Unsupported
+        }
+        Err(error) => CoverageState::from_error(error),
+    }
+}
+
 pub(crate) fn normalize_text_log(
     case: &mut Case,
     raw: &Path,
@@ -484,6 +505,54 @@ pub(crate) fn normalize_text_log(
     original: &Path,
     context: Option<(&str, &str)>,
 ) -> Result<u64> {
+    if original
+        .extension()
+        .is_some_and(|extension| extension == "gz")
+    {
+        let decoded_name = format!("{name}.decoded");
+        let stderr_name = format!("{name}.gzip.stderr");
+        let decoded = case.root.join("raw").join(&decoded_name);
+        let output = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&decoded)?;
+        let errors = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(case.root.join("raw").join(&stderr_name))?;
+        let status = Command::new("gzip")
+            .args(["-cd", "--"])
+            .arg(raw)
+            .stdin(Stdio::null())
+            .stdout(output)
+            .stderr(errors)
+            .status();
+        case.record_existing(
+            &format!(
+                "derived gzip -cd output of {}; compressed source: raw/{name}",
+                original.display()
+            ),
+            &decoded_name,
+        )?;
+        case.record_existing(
+            &format!("gzip -cd stderr for {}", original.display()),
+            &stderr_name,
+        )?;
+        let status = status.context("running optional gzip decoder")?;
+        if !status.success() {
+            anyhow::bail!(
+                "gzip decoding failed ({status}); compressed source, partial decoded output and stderr are retained"
+            );
+        }
+        return normalize_text_log(
+            case,
+            &decoded,
+            &decoded_name,
+            source,
+            &original.with_extension(""),
+            context,
+        );
+    }
     if original
         .extension()
         .and_then(|ext| ext.to_str())

@@ -96,9 +96,12 @@ network leads; their original lines remain in `raw/`. Browser visits are
 leads, and a browser visit does not prove upload. Current sockets are observed
 at one point in time. Historical application attribution depends on retained
 records with application names. Packet summaries do not identify an
-application by themselves. Upload payloads and binary or compressed imported-log
-formats are not decoded yet; coverage records these
-limits. No malware verdict or exfiltration conclusion is generated from weak
+application by themselves. Gzip logs use the optional platform `gzip` command.
+The compressed original, decoded copy and decoder stderr are saved and hashed.
+Event line references point to the decoded copy; its manifest identifies the
+compressed source. A decoder error retains partial output and marks the source
+failed. Binary and other compressed formats are not decoded; coverage records
+these limits. No malware verdict or exfiltration conclusion is generated from weak
 signals, so `findings.json` can be empty.
 
 ## Upload and download records
