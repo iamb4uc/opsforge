@@ -294,7 +294,7 @@ fn collect_journal(case: &mut Case, progress: &impl Fn(&str)) -> Result<()> {
         ]
         .iter()
         .any(|needle| message.to_ascii_lowercase().contains(needle));
-        case.event(&Event {
+        let event = Event {
             timestamp,
             source: "journal".into(),
             kind: if network { "network-lead" } else { "journal" }.into(),
@@ -311,7 +311,20 @@ fn collect_journal(case: &mut Case, progress: &impl Fn(&str)) -> Result<()> {
             level: EvidenceLevel::Lead,
             transfer: None,
             evidence_line: Some(count + 1),
-        })?;
+        };
+        let logger = sftp_journal_logger(&record);
+        if let Some(events) =
+            crate::transfers::sftp_events(message, logger, "journal", "raw/journal.jsonl")
+        {
+            for mut parsed in events {
+                parsed.timestamp = event.timestamp.clone();
+                parsed.user = event.user.clone();
+                parsed.evidence_line = event.evidence_line;
+                case.event(&parsed)?;
+            }
+        } else {
+            case.event(&event)?;
+        }
         count = count.saturating_add(1);
         if count.is_multiple_of(10_000) {
             progress(&format!("Journal: {count} entries saved"));
@@ -332,6 +345,45 @@ fn collect_journal(case: &mut Case, progress: &impl Fn(&str)) -> Result<()> {
         detail: format!("{count} entries; {status}"),
     })?;
     Ok(())
+}
+
+fn sftp_journal_logger(record: &Value) -> Option<&str> {
+    match record.get("_COMM").and_then(Value::as_str) {
+        Some(program @ ("sftp-server" | "internal-sftp")) => Some(program),
+        Some("sshd" | "sshd-session") => record
+            .get("SYSLOG_IDENTIFIER")
+            .and_then(Value::as_str)
+            .filter(|program| matches!(*program, "sftp-server" | "internal-sftp")),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod journal_tests {
+    use super::sftp_journal_logger;
+    use serde_json::json;
+
+    #[test]
+    fn syslog_label_alone_does_not_attribute_a_journal_record_to_sftp() {
+        assert_eq!(
+            sftp_journal_logger(&json!({"_COMM":"logger","SYSLOG_IDENTIFIER":"sftp-server"})),
+            None
+        );
+        assert_eq!(
+            sftp_journal_logger(&json!({"_COMM":"sftp-server"})),
+            Some("sftp-server")
+        );
+        assert_eq!(
+            sftp_journal_logger(
+                &json!({"_COMM":"sshd-session","SYSLOG_IDENTIFIER":"internal-sftp"})
+            ),
+            Some("internal-sftp")
+        );
+        assert_eq!(
+            sftp_journal_logger(&json!({"_COMM":"sshd","SYSLOG_IDENTIFIER":"sshd"})),
+            None
+        );
+    }
 }
 
 fn collect_logs(case: &mut Case, progress: &impl Fn(&str)) -> Result<()> {
@@ -554,6 +606,15 @@ fn normalize_text_log(
     for line in BufReader::new(File::open(raw)?).lines() {
         let line = line?;
         count = count.saturating_add(1);
+        if let Some(events) =
+            crate::transfers::sftp_events(&line, None, source, &format!("raw/{name}"))
+        {
+            for mut event in events {
+                event.evidence_line = Some(count);
+                case.event(&event)?;
+            }
+            continue;
+        }
         if let Some(mut event) = parser.parse(&line, source, &format!("raw/{name}")) {
             event.evidence_line = Some(count);
             case.event(&event)?;

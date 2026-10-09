@@ -109,6 +109,15 @@ Supported retained sources:
 - Standard FTP `xferlog`: file path, transferred bytes, peer, logged identity,
   incoming/outgoing direction and completion indicator. The source is a server;
   local timestamps lack a timezone, and spaces in file names become underscores.
+- OpenSSH SFTP server close records: filename and handle bytes read/written,
+  interpreted from the server perspective. Reads are outbound download records;
+  writes are inbound upload records. Counters can include repeated ranges and
+  exclude wire overhead. A close log does not prove close success or whole-file
+  completion, so normal records are observed and forced closes are interrupted.
+  Zero-byte closes have no inferred transfer direction. Journal records retain
+  their recorded timestamp and current UID-name mapping; plain syslog lines do
+  not gain an invented year/timezone, peer or account. This needs existing
+  SFTP transaction logging; ordinary SSH login logs do not retain file counters.
 - rclone JSON logs: recorded object name and copy outcome. Direction and remote
   destination require retained command context plus a recognized network backend
   record. Copy/sync/move/copyto/moveto accept recognized global/command flags;
@@ -146,7 +155,8 @@ Format references: [NGINX access logging](https://docs.nginx.com/nginx/admin-gui
 [rclone JSON logging](https://rclone.org/docs/#use-json-log),
 [Firefox download history](https://searchfox.org/firefox-main/source/toolkit/components/downloads/DownloadHistory.sys.mjs),
 [vsftpd transfer logging](https://security.appspot.com/vsftpd/vsftpd_conf.html),
-and [HAR request metadata](https://w3c.github.io/web-performance/specs/HAR/Overview.html).
+[HAR request metadata](https://w3c.github.io/web-performance/specs/HAR/Overview.html),
+and [OpenSSH SFTP handle accounting](https://github.com/openssh/openssh-portable/blob/master/sftp-server.c).
 
 Browser collection preserves the database and any available SQLite WAL,
 shared-memory, and rollback journal files. Parsing uses a separate working copy

@@ -1,6 +1,77 @@
 use crate::case::{Event, EvidenceLevel, Transfer};
 use serde_json::Value;
 
+pub(crate) fn sftp_events(
+    line: &str,
+    logger: Option<&str>,
+    source: &str,
+    raw: &str,
+) -> Option<Vec<Event>> {
+    let message = if matches!(logger, Some("sftp-server" | "internal-sftp")) {
+        line
+    } else {
+        let mut message = None;
+        for program in ["sftp-server[", "internal-sftp["] {
+            let (prefix, rest) = match line.split_once(program) {
+                Some(parts) => parts,
+                None => continue,
+            };
+            if !prefix.is_empty() && !prefix.ends_with(char::is_whitespace) {
+                continue;
+            }
+            let (pid, payload) = rest.split_once("]: ")?;
+            if pid.is_empty() || !pid.bytes().all(|byte| byte.is_ascii_digit()) {
+                return None;
+            }
+            message = Some(payload);
+            break;
+        }
+        message?
+    };
+    let forced = message.starts_with("forced close ");
+    let record = message
+        .strip_prefix("forced close \"")
+        .or_else(|| message.strip_prefix("close \""))?;
+    let (file, counters) = record.rsplit_once("\" bytes read ")?;
+    let (read, written) = counters.split_once(" written ")?;
+    let read: u64 = read.parse().ok()?;
+    let written: u64 = written.trim_end().parse().ok()?;
+    let mut events = Vec::new();
+    for (direction, bytes, operation) in
+        [("download", read, "read"), ("upload", written, "written")]
+    {
+        if bytes == 0 {
+            continue;
+        }
+        events.push(Event {
+            timestamp: None, source: source.into(), kind: format!("{direction}-transfer"),
+            application: Some("OpenSSH SFTP server".into()), user: None, destination: Some(file.into()),
+            detail: line.into(), evidence: raw.into(), level: EvidenceLevel::Recorded,
+            transfer: Some(Transfer {
+                direction: direction.into(), status: if forced { "interrupted" } else { "observed" }.into(),
+                protocol: "SFTP".into(), perspective: "server".into(), file: Some(file.into()), target: None, peer: None,
+                bytes: Some(bytes), bytes_basis: format!("server handle bytes {operation}; repeated ranges count again; wire overhead, close success and whole-file completion are unknown"), method: Some(format!("handle bytes {operation}")),
+            }), evidence_line: None,
+        });
+    }
+    if events.is_empty() {
+        events.push(Event {
+            timestamp: None,
+            source: source.into(),
+            kind: "file-close".into(),
+            application: Some("OpenSSH SFTP server".into()),
+            user: None,
+            destination: Some(file.into()),
+            detail: line.into(),
+            evidence: raw.into(),
+            level: EvidenceLevel::Recorded,
+            transfer: None,
+            evidence_line: None,
+        });
+    }
+    Some(events)
+}
+
 #[derive(Default)]
 pub struct Parser {
     rclone_paths: Option<(String, String, bool)>,
@@ -488,6 +559,73 @@ pub fn har_events(record: &Value, raw: &str) -> Option<Vec<Event>> {
 mod tests {
     use super::{Parser, har_events};
     use serde_json::json;
+
+    #[test]
+    fn sftp_counts_keep_server_perspective_and_unknown_completion() {
+        let line = "Oct 9 10:00:00 host internal-sftp[42]: close \"/uploads/file with spaces.txt\" bytes read 12 written 34";
+        let events = super::sftp_events(line, None, "log", "raw/log").expect("close record");
+        assert_eq!(events.len(), 2);
+        for (event, direction, bytes) in [(&events[0], "download", 12), (&events[1], "upload", 34)]
+        {
+            let transfer = event.transfer.as_ref().expect("counter");
+            assert_eq!(transfer.direction, direction);
+            assert_eq!(transfer.bytes, Some(bytes));
+            assert_eq!(transfer.status, "observed");
+            assert_eq!(transfer.perspective, "server");
+            assert_eq!(
+                transfer.file.as_deref(),
+                Some("/uploads/file with spaces.txt")
+            );
+            assert!(event.timestamp.is_none() && event.user.is_none() && transfer.peer.is_none());
+        }
+        let forced = super::sftp_events(
+            "forced close \"file\" bytes read 0 written 1",
+            Some("internal-sftp"),
+            "journal",
+            "raw/journal",
+        )
+        .expect("forced");
+        assert_eq!(
+            forced[0].transfer.as_ref().expect("counter").status,
+            "interrupted"
+        );
+        assert!(
+            super::sftp_events(
+                "close \"file\" bytes read 1 written 0",
+                None,
+                "log",
+                "raw/log"
+            )
+            .is_none()
+        );
+        assert!(
+            super::sftp_events(
+                "http://host/internal-sftp[42]: close \"file\" bytes read 1 written 0",
+                None,
+                "log",
+                "raw/log"
+            )
+            .is_none()
+        );
+        assert!(
+            super::sftp_events(
+                "close \"file\" bytes read -1 written 0",
+                Some("sftp-server"),
+                "log",
+                "raw/log"
+            )
+            .is_none()
+        );
+        let empty = super::sftp_events(
+            "close \"file\" bytes read 0 written 0",
+            Some("sftp-server"),
+            "log",
+            "raw/log",
+        )
+        .expect("zero counters");
+        assert_eq!(empty.len(), 1);
+        assert!(empty[0].transfer.is_none());
+    }
 
     fn rclone_line(message: &str, object: &str, object_type: &str) -> String {
         json!({"msg": message, "object": object, "objectType": object_type,
