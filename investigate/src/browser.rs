@@ -22,7 +22,9 @@ pub fn collect(case: &mut Case, progress: &impl Fn(&str)) -> Result<()> {
                     failed = failed.saturating_add(1);
                     case.coverage(&Coverage {
                         source: home.display().to_string(),
-                        state: CoverageState::Failed,
+                        state: error
+                            .io_error()
+                            .map_or(CoverageState::Failed, CoverageState::from_io),
                         detail: error.to_string(),
                     })?;
                     continue;
@@ -55,7 +57,7 @@ pub fn collect(case: &mut Case, progress: &impl Fn(&str)) -> Result<()> {
                     failed = failed.saturating_add(1);
                     case.coverage(&Coverage {
                         source: entry.path().display().to_string(),
-                        state: CoverageState::Failed,
+                        state: CoverageState::from_error(&error),
                         detail: format!("snapshot or parser failed: {error}"),
                     })?;
                 }
