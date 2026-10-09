@@ -103,6 +103,22 @@ signals, so `findings.json` can be empty.
 
 ## Upload and download records
 
+Syncthing JSONL audit records (`ItemStarted`, `ItemFinished`, `DeviceConnected`
+and `DeviceDisconnected`, plus `StateChanged` and `FolderErrors`) retain their
+event time, folder/item or device address
+and local result. Successful file operations can reuse local blocks; they are
+timeline activity rather than proof of transferred bytes or an outbound upload.
+Update, metadata and delete remain distinct. Empty or missing error fields have
+unknown outcomes; explicit null means the local operation completed. Connections
+do not establish file transfer. Discovery reads retained audit log files in the
+listed Syncthing locations; custom audit paths can be supplied with `--import`.
+Folder error lists describe their recorded time and become obsolete after a
+later syncing state. A folder state duration is not a network transfer duration.
+The investigator does not enable audit logging on the investigated device.
+Format references: [file operations](https://docs.syncthing.net/events/itemfinished.html),
+[connections](https://docs.syncthing.net/events/deviceconnected.html),
+[audit logging](https://docs.syncthing.net/users/syncthing.html).
+
 The Uploads page separates completed file-transfer records, accepted HTTP
 requests and failed/incomplete attempts. Counts are records, not unique files;
 the same transfer can appear in both client and server logs. An inbound upload
