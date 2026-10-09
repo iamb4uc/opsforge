@@ -263,7 +263,7 @@ impl Case {
             }
             let source = match name {
                 "live-traffic.pcap" => {
-                    "tcpdump -i any; capture interrupted; hash covers saved bytes only"
+                    "tcpdump -i any; collection interrupted; capture completeness unknown; hash covers saved bytes only"
                 }
                 "live-traffic.log" => "tcpdump capture stderr; collection interrupted",
                 "live-traffic-summary.txt" => "tcpdump packet decode; collection interrupted",

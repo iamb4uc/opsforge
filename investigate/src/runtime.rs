@@ -51,6 +51,8 @@ fn signal_group(pid: u32, signal: &str) -> bool {
 pub(crate) struct OwnedChild {
     child: Arc<Mutex<Child>>,
     finished: Arc<AtomicBool>,
+    cancelled: Arc<AtomicUsize>,
+    terminated: Arc<AtomicBool>,
     watcher: Option<JoinHandle<()>>,
 }
 
@@ -63,9 +65,18 @@ impl OwnedChild {
     fn start(command: &mut Command, cancelled: Arc<AtomicUsize>) -> Result<Self> {
         let child = Arc::new(Mutex::new(command.process_group(0).spawn()?));
         let finished = Arc::new(AtomicBool::new(false));
-        let watched_child = Arc::clone(&child);
-        let watched_finished = Arc::clone(&finished);
-        let watcher = thread::spawn(move || {
+        let mut owned = Self {
+            child,
+            finished,
+            cancelled,
+            terminated: Arc::new(AtomicBool::new(false)),
+            watcher: None,
+        };
+        let watched_child = Arc::clone(&owned.child);
+        let watched_finished = Arc::clone(&owned.finished);
+        let cancelled = Arc::clone(&owned.cancelled);
+        let terminated = Arc::clone(&owned.terminated);
+        let watcher = thread::Builder::new().spawn(move || {
             let mut started = None;
             let mut previous = None;
             while !watched_finished.load(Ordering::Relaxed) {
@@ -89,17 +100,17 @@ impl OwnedChild {
                         if !signal_group(child.id(), signal) {
                             let _ = child.kill();
                         }
+                        if signal == "-KILL" {
+                            terminated.store(true, Ordering::Relaxed);
+                        }
                         previous = Some(signal);
                     }
                 }
                 thread::sleep(Duration::from_millis(50));
             }
-        });
-        Ok(Self {
-            child,
-            finished,
-            watcher: Some(watcher),
-        })
+        })?;
+        owned.watcher = Some(watcher);
+        Ok(owned)
     }
 
     pub(crate) fn take_stdout(&self) -> Result<ChildStdout> {
@@ -113,6 +124,12 @@ impl OwnedChild {
 
     pub(crate) fn try_wait(&self) -> io::Result<Option<ExitStatus>> {
         let mut child = self.child.lock().unwrap_or_else(|error| error.into_inner());
+        if !self.finished.load(Ordering::Relaxed)
+            && self.cancelled.load(Ordering::Relaxed) != 0
+            && !self.terminated.load(Ordering::Relaxed)
+        {
+            return Ok(None);
+        }
         let status = child.try_wait()?;
         if status.is_some() {
             self.finished.store(true, Ordering::Relaxed);
@@ -172,16 +189,87 @@ mod tests {
         let mut remainder = String::new();
         assert_eq!(output.read_line(&mut remainder).expect("pipe closes"), 0);
         assert!(!child.wait().expect("reaped").success());
-        assert!(started.elapsed() < Duration::from_secs(5));
-        if let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) {
-            assert_eq!(
-                stat.rsplit_once(") ")
-                    .expect("proc state")
-                    .1
-                    .split_whitespace()
-                    .next(),
-                Some("Z")
+        loop {
+            let stat = std::fs::read_to_string(format!("/proc/{pid}/stat"));
+            if stat
+                .as_ref()
+                .is_err_and(|error| error.kind() == io::ErrorKind::NotFound)
+                || stat.as_ref().is_ok_and(|stat| {
+                    stat.rsplit_once(") ")
+                        .expect("proc state")
+                        .1
+                        .split_whitespace()
+                        .next()
+                        == Some("Z")
+                })
+            {
+                break;
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(5),
+                "owned child did not exit"
             );
+            thread::sleep(Duration::from_millis(10));
         }
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn cancellation_kills_a_signal_ignoring_child_before_reaping_its_parent() {
+        let path = std::env::temp_dir().join(format!("opsforge-child-pid-{}", std::process::id()));
+        let cancelled = Arc::new(AtomicUsize::new(0));
+        let child = OwnedChild::start(
+            Command::new("sh")
+                .args([
+                    "-c",
+                    "trap '' INT; (trap '' TERM; sleep 30) & printf '%s\\n' $! > \"$1\"; wait",
+                    "sh",
+                ])
+                .arg(&path)
+                .stdout(Stdio::null()),
+            Arc::clone(&cancelled),
+        )
+        .expect("owned process group");
+        let started = Instant::now();
+        let pid: u32 = loop {
+            if let Ok(text) = std::fs::read_to_string(&path)
+                && let Ok(pid) = text.trim().parse()
+            {
+                break pid;
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(5),
+                "child did not start"
+            );
+            thread::sleep(Duration::from_millis(10));
+        };
+        cancelled.store(15, Ordering::Relaxed);
+        assert!(!child.wait().expect("reaped parent").success());
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let stat = std::fs::read_to_string(format!("/proc/{pid}/stat"));
+            if stat
+                .as_ref()
+                .is_err_and(|error| error.kind() == io::ErrorKind::NotFound)
+                || stat.as_ref().is_ok_and(|stat| {
+                    stat.rsplit_once(") ")
+                        .expect("proc state")
+                        .1
+                        .split_whitespace()
+                        .next()
+                        == Some("Z")
+                })
+            {
+                break;
+            }
+            if Instant::now() >= deadline {
+                let _ = Command::new("kill")
+                    .args(["-KILL", &pid.to_string()])
+                    .status();
+                panic!("signal-ignoring owned child survived cancellation");
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        std::fs::remove_file(path).expect("remove owned pid fixture");
     }
 }
