@@ -2,6 +2,10 @@
 
 opsforge tests are split by what they can honestly prove.
 
+Fixture checks establish parser and output-contract behavior. Runtime checks
+exercise actual tools; CI uploads generated artifacts rather than committing
+them to the repository.
+
 ## Linux
 
 Fast local checks:
@@ -74,3 +78,20 @@ Each runtime output is checked for the standard `raw/`, `normalized/`,
 - Windows runtime checks run on GitHub's Windows runner.
 - Parser-only Windows scripts are still useful, but they should not be treated
   as runtime-proven until added to `bin/test.ps1 runtime`.
+
+## Maintainer releases
+
+Releases are tag-driven. After the PR checks pass and the work is merged to
+`main`, sync the checkout and create a signed tag for the chosen version:
+
+```bash
+git switch main
+git pull --ff-only origin main
+git tag -s vX.Y.Z -m "vX.Y.Z"
+git push origin vX.Y.Z
+```
+
+Replace `vX.Y.Z` with the release version. GitHub Actions runs the release
+checks, builds the static Linux investigator archive and checksum, and publishes
+the GitHub release. Verify the published archive and bootstrap before calling
+delivery complete.

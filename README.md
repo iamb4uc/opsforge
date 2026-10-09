@@ -1,249 +1,77 @@
 # opsforge
 
-opsforge is a defensive toolkit for SOC, NOC, Linux, Windows, IR, and ops work.
+**Collect evidence. Investigate activity. Report clearly.**
 
-It is built for the boring stuff that actually matters: triage, persistence checks, disk issues, timelines, network exposure, and reports you can use.
+A blue-team toolkit for endpoint triage, forensic evidence collection, security
+audits, and troubleshooting. Bash and PowerShell tools cover Linux and Windows.
+The guided forensic investigator currently runs on Linux x86_64.
 
-No fake polish. No random helper stack. No toy recon wrappers.
+**Beta:** useful today, with coverage still expanding. See the
+[latest release](https://github.com/iamb4uc/opsforge/releases/latest).
 
-## Status
+## What you can do
 
-opsforge is beta. The scripts are useful, but they are still being tested across
-real systems and CI runners.
+- Triage hosts, review persistence, and check network exposure.
+- Audit SSH, privileges, configuration drift, and service health.
+- Investigate retained upload/download records, browser activity, and logs.
+- Collect timed network traffic and build searchable device timelines.
+- Preserve raw evidence, structured JSON, source coverage, and readable reports.
 
-The existing command toolkit stays shell-only:
+The investigator supports retained FTP, rclone, HTTP access-log, and HAR transfer
+records, plus Chromium downloads. The wider toolkit includes Linux and Windows
+collection profiles and individual operational checks.
 
-- Linux and Unix scripts use Bash or POSIX sh where that makes sense.
-- Windows scripts use PowerShell.
-- The Linux investigator is a separate prebuilt Rust runner for guided case
-  collection and offline reporting. It does not require Rust on the target.
-- Scripts are read-only by default unless a script clearly says otherwise and
-  exposes an explicit action flag.
+## Quick start
 
-## What It Does
-
-Current work focuses on:
-
-- Linux and Windows host triage
-- persistence checks
-- deleted binary detection
-- disk pressure notes
-- TLS inventory
-- firewall and network exposure checks
-- event and log timelines
-- output folders with raw evidence, findings, summaries, and reports
-
-## Runtime Checks
-
-CI runs selected tools on Linux and Windows runners.
-
-Generated output is checked against the output contract after runtime execution.
-Runtime artifacts are uploaded by CI and are not committed to the repo.
-
-Fixture checks only prove the output contract parser. They are not proof that the
-tools work. Runtime checks are what catch real script failures.
-
-Linux:
-
-```bash
-./bin/test runtime-linux
-```
-
-Windows:
-
-```powershell
-.\bin\test.ps1 runtime
-```
-
-## Commands
-
-Launch the Linux investigator with one command:
+Launch the Linux investigator:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/iamb4uc/opsforge/main/investigate/install-and-run.sh -o /tmp/opsforge-investigate-bootstrap && bash /tmp/opsforge-investigate-bootstrap --install-deps --remove-bootstrap
 ```
 
-The bootstrap verifies the release archive with SHA-256 and, with `--install-deps`, installs missing
-`tcpdump`, `ss`, or `timeout` through the host package manager, and opens the
-setup TUI. It checks existing root access first, then requests `sudo` if needed.
-The default case parent is `/var/lib/opsforge/cases`; the TUI lets you change it
-to another root-owned location whose parent directories are not group or world writable.
-The live capture defaults to `5m` and accepts positive `s`, `m`, `h`, or `d`
-durations. The temporary binary and bootstrap are removed after the run; the
-case directory stays. Use `--output PATH`, `--duration 1h`, or `--import PATH`
-after `--remove-bootstrap` when needed.
+The bootstrap verifies the release archive, installs missing dependencies when
+requested, and opens the setup TUI. No Rust toolchain is needed on the target.
+It uses existing root access or asks for sudo.
 
-The case contains raw evidence, normalized JSONL, source coverage, hashes,
-findings, a Markdown report, and offline HTML pages. Browser history and log
-keywords are leads, not proof of upload. Historical application traffic can
-only be attributed where the device or imported logs retained that detail.
-See [Linux investigator notes](docs/linux-investigator.md) for source coverage
-and limits.
+Choose collection options, extra log paths, and an output location in the TUI.
+Live capture defaults to `5m`; custom durations use `s`, `m`, `h`, or `d`.
+Cases default to `/var/lib/opsforge/cases/`. Temporary download and bootstrap
+files are removed after the run; the case directory stays.
 
-Install on Linux/Unix:
+For the Linux/Windows command toolkit, see [installation and usage](docs/usage.md).
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/iamb4uc/opsforge/main/install.sh -o /tmp/opsforge-install && bash /tmp/opsforge-install
-```
+## Reports you can inspect
 
-By default, root installs put the command in `/usr/local/bin/opsforge` and the
-tool files in `/opt/opsforge`. Non-root installs use `~/.local/bin/opsforge`
-and `~/.local/share/opsforge`.
+![Uploads dashboard showing synthetic rclone transfers and a browser HAR request, with destinations, outcomes, byte basis, and raw evidence references](docs/images/uploads-demo.png)
 
-Check what the installer would do without writing files:
+*Actual opsforge dashboard rendered from synthetic demo records.*
 
-```bash
-bash /tmp/opsforge-install --dry-run
-bash /tmp/opsforge-install --check
-```
+The offline dashboard has Overview, Uploads, Timeline, Downloads, Network,
+Coverage, and Evidence tabs. Search and filter the complete event collection,
+then follow records back to their raw sources.
 
-Check the host first:
+Cases include raw evidence, normalized JSONL, a source manifest, SHA-256 hashes,
+and Markdown/HTML reports. Keep the whole case directory when sharing it.
 
-```bash
-./bin/opsforge doctor
-./bin/opsforge linux doctor
-```
+## Coverage and limits
 
-```powershell
-.\bin\opsforge.ps1 doctor
-.\bin\opsforge.ps1 windows doctor
-```
+Collection is read-only by default; dependency installation is an explicit
+bootstrap option. Modifying operational tools require explicit action flags.
 
-Run the main safe collection set:
+Historical detail depends on what the device or imported logs retained.
+Browser visits alone do not prove uploads, and a filename does not establish
+payload recovery. Source failures, unsupported formats, and missing records stay
+visible. Review collected data before sharing it.
 
-```bash
-./bin/opsforge linux all --output ./output --markdown --json
-```
+## Documentation and feedback
 
-```powershell
-.\bin\opsforge.ps1 windows quick -OutputPath .\output -Json -Markdown
-.\bin\opsforge.ps1 windows ir -OutputPath .\output -Json -Markdown
-.\bin\opsforge.ps1 windows full -OutputPath .\output -Json -Markdown
-.\bin\opsforge.ps1 windows all -OutputPath .\output -Json -Markdown
-```
+- [Investigator setup, supported sources, and limits](docs/linux-investigator.md)
+- [Commands and collection profiles](docs/usage.md)
+- [Output format](docs/output-format.md) and [report standard](docs/report-standard.md)
+- [Testing](docs/testing.md), [runtime validation](docs/runtime-validation.md), and [compatibility](docs/compatibility.md)
+- [Security reporting](SECURITY.md) · [GPL-3.0 license](LICENSE)
 
-Linux:
-
-```bash
-./bin/opsforge linux triage --output ./output --markdown --json
-./bin/opsforge linux persistence --output ./output
-./bin/opsforge linux deleted-binaries --output ./output
-./bin/opsforge linux proc-tree --output ./output
-./bin/opsforge linux suid --baseline --output ./output
-./bin/opsforge linux suid --check --output ./output
-./bin/opsforge linux priv-surface --output ./output
-./bin/opsforge linux ssh-audit --output ./output
-./bin/opsforge linux config-drift --baseline --output ./output
-./bin/opsforge linux config-drift --check --output ./output
-./bin/opsforge linux net-drift --targets configs/linux/network-targets.conf --output ./output
-./bin/opsforge linux disk-rca --output ./output
-./bin/opsforge linux tls --targets configs/linux/tls-targets.conf --output ./output
-./bin/opsforge linux firewall --output ./output
-./bin/opsforge linux log-silence --config configs/examples/log-sources.conf --output ./output
-./bin/opsforge linux timeline --output ./output
-./bin/opsforge linux web-triage --output ./output
-```
-
-Windows:
-
-```powershell
-.\bin\opsforge.ps1 windows quick -OutputPath .\output -Json -Markdown
-.\bin\opsforge.ps1 windows ir -OutputPath .\output -Json -Markdown
-.\bin\opsforge.ps1 windows full -OutputPath .\output -Json -Markdown
-.\bin\opsforge.ps1 windows triage -OutputPath .\output -Json -Markdown
-.\bin\opsforge.ps1 windows persistence -OutputPath .\output
-.\bin\opsforge.ps1 windows services -OutputPath .\output
-.\bin\opsforge.ps1 windows tasks -OutputPath .\output
-.\bin\opsforge.ps1 windows network -OutputPath .\output
-.\bin\opsforge.ps1 windows firewall -OutputPath .\output
-.\bin\opsforge.ps1 windows defender -OutputPath .\output
-.\bin\opsforge.ps1 windows privilege -OutputPath .\output
-.\bin\opsforge.ps1 windows timeline -OutputPath .\output
-.\bin\opsforge.ps1 windows log-tampering -OutputPath .\output
-```
-
-## Output
-
-Major scripts create timestamped output directories:
-
-```text
-output/HOSTNAME-scriptname-YYYYMMDD-HHMMSS/
-├── raw/
-├── normalized/
-├── report.md
-├── findings.json
-├── summary.txt
-└── evidence.tar.gz
-```
-
-`findings.json` uses the same fields everywhere:
-
-```text
-id, title, severity, host, category, evidence, recommendation
-```
-
-Validate a generated output directory with:
-
-```bash
-./bin/validate-output-contract output/HOSTNAME-scriptname-YYYYMMDD-HHMMSS
-```
-
-## Testing
-
-Linux:
-
-```bash
-./bin/test syntax
-./bin/test help
-./bin/test wrapper-targets
-./bin/test script-catalog
-./bin/test forbidden-files
-./bin/test readability
-./bin/test output-contract
-./bin/test linux-fixtures
-./bin/test runtime-linux
-```
-
-Windows:
-
-```powershell
-.\bin\test.ps1 parser
-.\bin\test.ps1 wrapper-targets
-.\bin\test.ps1 static
-.\bin\test.ps1 runtime
-```
-
-## Releases
-
-Releases are tag-driven.
-
-Create and push a signed tag when `main` is ready:
-
-```bash
-git tag -s v0.5.1 -m "v0.5.1"
-git push origin v0.5.1
-```
-
-GitHub Actions runs the release checks and creates the GitHub release with
-`gh release create`.
-
-## Sensitive Output
-
-opsforge collects host and system data.
-
-Generated reports may contain hostnames, usernames, IP addresses, process
-arguments, service names, file paths, registry values, and other operational
-details.
-
-Review and sanitize output before sharing it.
-
-## Docs
-
-- Runtime validation: `docs/runtime-validation.md`
-- Manual testing: `docs/manual-testing.md`
-- Compatibility: `docs/compatibility.md`
-- Output format: `docs/output-format.md`
-- Report standard: `docs/report-standard.md`
-- Script catalog: `docs/script-catalog.md`
-- Testing: `docs/testing.md`
-- Changelog: `CHANGELOG.md`
+Found a broken collection path or need another evidence format?
+[Open an issue](https://github.com/iamb4uc/opsforge/issues) with the platform,
+tool version, and sanitized details. If opsforge is useful, a star helps others
+find it.

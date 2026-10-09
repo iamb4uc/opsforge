@@ -2,9 +2,45 @@
 
 Run scripts directly or through the wrapper.
 
+## Install the command toolkit
+
+Linux/Unix:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/iamb4uc/opsforge/main/install.sh -o /tmp/opsforge-install && bash /tmp/opsforge-install
+```
+
+Root installs use `/usr/local/bin/opsforge` and `/opt/opsforge`. Non-root
+installs use `~/.local/bin/opsforge` and `~/.local/share/opsforge`.
+Inspect the installer without installing:
+
+```bash
+bash /tmp/opsforge-install --dry-run
+bash /tmp/opsforge-install --check
+```
+
+The examples below use a repository checkout. After installation, replace
+`./bin/opsforge` with `opsforge`.
+
+For guided evidence collection and offline HTML reports, use the separate
+[Linux investigator](linux-investigator.md).
+
+## Check the host
+
+```bash
+./bin/opsforge doctor
+./bin/opsforge linux doctor
+```
+
+```powershell
+.\bin\opsforge.ps1 doctor
+.\bin\opsforge.ps1 windows doctor
+```
+
 ## Linux
 
 ```bash
+./bin/opsforge linux all --output ./output --markdown --json
 ./bin/opsforge linux triage --output ./output --markdown --json
 ./bin/opsforge linux persistence --output ./output
 ./bin/opsforge linux deleted-binaries --output ./output
