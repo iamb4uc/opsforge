@@ -61,15 +61,20 @@ The cases contain:
   empty sources, and unsupported formats. Statuses are `collected`, `empty`,
   `unavailable`, `denied`, `unsupported`, `failed`, `skipped` and `cancelled`.
   Missing tools/paths are unavailable; filesystem permission errors are denied.
-  Collection interruptions reported by an I/O operation are cancelled; a killed
-  process can still leave an incomplete case without a final status record.
+  Collection interruptions reported by an I/O operation are cancelled. Abrupt
+  termination can leave the case marked in progress.
 - `normalized/file-inventory.jsonl`: path, size, and modification time when
   deep inventory is selected.
 - `manifest.jsonl`: source path, copy time, byte count, and SHA-256 for each
   saved raw file.
 - `case-info.json`, `completion.json`, and `checksums.sha256`: run identity,
-  completion marker, and hashes of the finished case files. An interrupted
-  case keeps saved evidence but has no completion marker.
+  collection status, and case hashes. A status marker and initial dashboard are
+  written before collection. Fatal errors retain the case path and attempt a
+  partial report and hashes. The dashboard labels incomplete cases and may show
+  an earlier snapshot if final generation failed. Full storage or abrupt
+  termination can prevent updating the initial marker; raw evidence and JSONL
+  remain available. Termination signals currently stop the process without
+  finalization.
 - `findings.json`, `report.md`, `summary.txt`, and `dashboard/` with Overview,
   Uploads, Timeline, Downloads, Network, Applications, Coverage, and Evidence HTML pages.
 

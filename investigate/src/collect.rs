@@ -18,24 +18,47 @@ pub fn run(config: &RunConfig, progress: &impl Fn(&str)) -> Result<PathBuf> {
     config.validate().map_err(anyhow::Error::msg)?;
     let mut case = Case::new(&config.output_base)?;
     let root = case.root.clone();
-    fs::write(root.join("config.json"), serde_json::to_vec_pretty(config)?)?;
-    fs::write(
-        root.join("case-info.json"),
-        serde_json::to_vec_pretty(&serde_json::json!({
-            "tool": "opsforge-investigate",
-            "case_id": root.file_name().unwrap_or_default().to_string_lossy(),
-            "version": env!("CARGO_PKG_VERSION"),
-            "started_at": jiff::Timestamp::now().to_string(),
-            "operator": std::env::var("SUDO_USER").or_else(|_| std::env::var("USER")).unwrap_or_else(|_| "unknown".into()),
-        }))?,
-    )?;
     progress(&format!("Case created: {}", root.display()));
+    let result = (|| {
+        crate::report::write_completion(&root, "in_progress", None)?;
+        fs::write(root.join("config.json"), serde_json::to_vec_pretty(config)?)?;
+        fs::write(
+            root.join("case-info.json"),
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "tool": "opsforge-investigate",
+                "case_id": root.file_name().unwrap_or_default().to_string_lossy(),
+                "version": env!("CARGO_PKG_VERSION"),
+                "started_at": jiff::Timestamp::now().to_string(),
+                "operator": std::env::var("SUDO_USER").or_else(|_| std::env::var("USER")).unwrap_or_else(|_| "unknown".into()),
+            }))?,
+        )?;
+        crate::report::generate(&root)?;
+        run_case(&mut case, config, progress)
+    })();
+    if let Err(error) = result {
+        let detail = format!("{error:#}");
+        let _ = case.coverage(&Coverage {
+            source: "case-finalization".into(),
+            state: CoverageState::Failed,
+            detail: detail.clone(),
+        });
+        // Preserve the initial dashboard if a damaged or full output prevents rebuilding it.
+        let _ = crate::report::generate(&root);
+        let _ = crate::report::write_completion(&root, "failed", Some(&detail));
+        let _ = crate::report::write_checksums(&root);
+        return Err(error.context(format!("incomplete case retained at {}", root.display())));
+    }
+    Ok(root)
+}
+
+fn run_case(case: &mut Case, config: &RunConfig, progress: &impl Fn(&str)) -> Result<()> {
+    let root = case.root.clone();
     let mut live = if config.live_capture {
         progress(&format!(
             "Starting live traffic capture for {}",
             config.capture_duration
         ));
-        match start_capture(&mut case, config.capture_duration.seconds()) {
+        match start_capture(case, config.capture_duration.seconds()) {
             Ok(capture) => capture,
             Err(error) => {
                 case.coverage(&Coverage {
@@ -78,10 +101,10 @@ pub fn run(config: &RunConfig, progress: &impl Fn(&str)) -> Result<PathBuf> {
 
     if config.exfil || config.timeline {
         progress("Collecting active sockets and installed applications");
-        source(&mut case, "active-sockets", |case| {
+        source(case, "active-sockets", |case| {
             run_command(case, "active-sockets", "ss", &["-tunap"])
         })?;
-        source(&mut case, "active-socket-normalization", normalize_sockets)?;
+        source(case, "active-socket-normalization", normalize_sockets)?;
         for (name, program, args) in [
             (
                 "packages-dpkg",
@@ -109,38 +132,36 @@ pub fn run(config: &RunConfig, progress: &impl Fn(&str)) -> Result<PathBuf> {
             ),
             ("apps-snap", "snap", vec!["list"]),
         ] {
-            source(&mut case, name, |case| {
+            source(case, name, |case| {
                 run_command(case, name, program, &args)?;
                 crate::applications::inventory(case, name)
             })?;
         }
         progress("Collecting retained system journal");
-        source(&mut case, "journal", |case| collect_journal(case, progress))?;
+        source(case, "journal", |case| collect_journal(case, progress))?;
         progress("Preserving retained system logs");
-        source(&mut case, "system-logs", |case| {
-            collect_logs(case, progress)
-        })?;
+        source(case, "system-logs", |case| collect_logs(case, progress))?;
     }
     if config.exfil || config.downloads {
         progress("Collecting retained application transfer logs");
-        source(&mut case, "application-transfer-logs", |case| {
+        source(case, "application-transfer-logs", |case| {
             crate::applications::collect(case, progress)
         })?;
         progress("Collecting browser activity and downloads");
-        source(&mut case, "browser-profiles", |case| {
+        source(case, "browser-profiles", |case| {
             crate::browser::collect(case, progress)
         })?;
         case.coverage(&Coverage { source: "browser-upload-transactions".into(), state: CoverageState::Unsupported, detail: "browser history does not retain upload payloads or prove that a visit uploaded data".into() })?;
     }
     for (index, path) in config.imports.iter().enumerate() {
         progress(&format!("Importing {}", path.display()));
-        source(&mut case, &path.display().to_string(), |case| {
+        source(case, &path.display().to_string(), |case| {
             import_path(case, path, &format!("import-{index:03}"), progress)
         })?;
     }
     if config.deep_inventory {
         progress("Inventorying local files");
-        source(&mut case, "file-inventory", |case| {
+        source(case, "file-inventory", |case| {
             inventory(case, Path::new("/"), progress)
         })?;
     } else {
@@ -151,24 +172,19 @@ pub fn run(config: &RunConfig, progress: &impl Fn(&str)) -> Result<PathBuf> {
         })?;
     }
     if let Some(capture) = &mut live {
-        source(&mut case, "live-traffic", |case| {
+        source(case, "live-traffic", |case| {
             finish_capture(case, capture, progress)
         })?;
     }
     progress("Building offline dashboard");
     crate::report::generate(&root)?;
-    fs::write(
-        root.join("completion.json"),
-        serde_json::to_vec_pretty(
-            &serde_json::json!({"finished_at": jiff::Timestamp::now().to_string(), "status": "finished_review_coverage"}),
-        )?,
-    )?;
+    crate::report::write_completion(&root, "finished_review_coverage", None)?;
     crate::report::write_checksums(&root)?;
     progress(&format!(
         "Case saved; review source coverage: {}",
         root.display()
     ));
-    Ok(root)
+    Ok(())
 }
 
 fn source(
