@@ -384,6 +384,15 @@ fn collect_journal(case: &mut Case, progress: &impl Fn(&str)) -> Result<()> {
                 parsed.evidence_line = event.evidence_line;
                 case.event(&parsed)?;
             }
+        } else if let Some(mut parsed) = crate::transfers::rsync_event(
+            message,
+            record.get("_COMM").and_then(Value::as_str),
+            "journal",
+            "raw/journal.jsonl",
+        ) {
+            parsed.timestamp = event.timestamp.clone();
+            parsed.evidence_line = event.evidence_line;
+            case.event(&parsed)?;
         } else {
             case.event(&event)?;
         }

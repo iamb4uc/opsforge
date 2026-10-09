@@ -9,6 +9,102 @@ pub(crate) fn leading_timestamp(line: &str) -> Option<String> {
         .map(|time| time.to_string())
 }
 
+pub(crate) fn rsync_event(
+    line: &str,
+    logger: Option<&str>,
+    source: &str,
+    raw: &str,
+) -> Option<Event> {
+    let (timestamp, message) = if matches!(logger, Some("rsync" | "rsyncd")) {
+        (None, line)
+    } else {
+        let date = line.get(..10)?;
+        let time = line.get(11..19)?;
+        if line.get(10..11)? != " "
+            || line.get(19..20)? != " "
+            || date.as_bytes().get(4) != Some(&b'/')
+            || date.as_bytes().get(7) != Some(&b'/')
+        {
+            return None;
+        }
+        let timestamp = format!("{}T{time}", date.replace('/', "-"));
+        timestamp.parse::<jiff::civil::DateTime>().ok()?;
+        let rest = line.get(20..)?.strip_prefix('[')?;
+        let (pid, message) = rest.split_once("] ")?;
+        if pid.parse::<u32>().ok()? == 0 {
+            return None;
+        }
+        (Some(timestamp), message)
+    };
+    let (operation, rest) = message.split_once(' ')?;
+    if operation.len() == 11
+        && operation
+            .bytes()
+            .next()
+            .is_some_and(|code| b"<>ch.".contains(&code))
+        && operation
+            .as_bytes()
+            .get(1)
+            .is_some_and(|kind| b"fdLDS".contains(kind))
+        && operation
+            .bytes()
+            .skip(2)
+            .all(|code| b".+?cstTpogunbax".contains(&code))
+        && !rest.is_empty()
+    {
+        return Some(Event {
+            timestamp,
+            source: source.into(),
+            kind: "rsync-itemized-update".into(),
+            application: Some("rsync".into()),
+            user: None,
+            destination: Some(rest.into()),
+            detail: format!(
+                "{line}\nItemized update, not proof of a network transfer or completed payload. Local copies use this format too. Peer, actual transferred bytes and outcome are not retained; names are kept as logged and plain log time has no timezone."
+            ),
+            evidence: raw.into(),
+            level: EvidenceLevel::Lead,
+            transfer: None,
+            evidence_line: None,
+        });
+    }
+    if !matches!(operation, "send" | "recv" | "del.") {
+        return None;
+    }
+    let (host, rest) = rest.split_once(" [")?;
+    if host.is_empty() || host.contains(char::is_whitespace) {
+        return None;
+    }
+    let (peer, rest) = rest.split_once("] ")?;
+    peer.parse::<std::net::IpAddr>().ok()?;
+    let (module, rest) = rest.split_once(" (")?;
+    if module.is_empty() {
+        return None;
+    }
+    let (user, rest) = rest.split_once(") ")?;
+    let (file, length) = rest.rsplit_once(' ')?;
+    if file.is_empty() {
+        return None;
+    }
+    let length: u64 = length.parse().ok()?;
+    let direction = if operation == "recv" {
+        "upload"
+    } else {
+        "download"
+    };
+    Some(Event {
+        timestamp, source: source.into(), kind: if operation == "del." { "rsync-delete".into() } else { format!("{direction}-transfer") },
+        application: Some("rsync daemon".into()), user: (!user.is_empty()).then(||user.to_owned()), destination: Some(file.into()),
+        detail: format!("{line}\nDaemon operation record. It may describe content or metadata updates; actual payload bytes are unknown. File/module names are retained as logged, including escaping. Plain log time has no retained timezone."),
+        evidence: raw.into(), level: EvidenceLevel::Recorded,
+        transfer: (operation != "del.").then(||Transfer {
+            direction: direction.into(), status: "observed".into(), protocol: "rsync".into(), perspective: "server".into(),
+            file: Some(file.into()), target: Some(format!("module {module}")), peer: Some(peer.into()), bytes: Some(length),
+            bytes_basis: "daemon %l: logged object length; not actual payload or wire bytes; object type is not retained".into(), method: Some(operation.into()),
+        }), evidence_line: None,
+    })
+}
+
 pub(crate) fn sftp_events(
     line: &str,
     logger: Option<&str>,
@@ -90,6 +186,9 @@ pub struct Parser {
 
 impl Parser {
     pub fn parse(&mut self, line: &str, source: &str, raw: &str) -> Option<Event> {
+        if let Some(event) = rsync_event(line, None, source, raw) {
+            return Some(event);
+        }
         let mut event = Event {
             timestamp: leading_timestamp(line),
             source: source.into(),
@@ -650,6 +749,51 @@ pub fn har_events(record: &Value, raw: &str) -> Option<Vec<Event>> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn rsync_records_keep_object_length_and_local_updates_distinct() {
+        let mut parser = super::Parser::default();
+        for (operation, direction) in [("recv", "upload"), ("send", "download")] {
+            let line = format!(
+                "2026/10/09 17:38:45 [42] {operation} UNDETERMINED [::1] evidence () report with spaces.txt 35"
+            );
+            let event = parser.parse(&line, "import", "raw/rsync").expect("daemon");
+            assert_eq!(event.timestamp.as_deref(), Some("2026-10-09T17:38:45"));
+            assert!(event.user.is_none());
+            let transfer = event.transfer.expect("operation");
+            assert_eq!(transfer.direction, direction);
+            assert_eq!(transfer.status, "observed");
+            assert_eq!(transfer.file.as_deref(), Some("report with spaces.txt"));
+            assert_eq!(transfer.bytes, Some(35));
+            assert!(transfer.bytes_basis.contains("not actual payload"));
+        }
+        for code in [">f+++++++++", "<f..t......"] {
+            let line = format!("2026/10/09 17:38:45 [42] {code} report with spaces.txt");
+            let event = parser
+                .parse(&line, "import", "raw/rsync")
+                .expect("itemized");
+            assert!(event.transfer.is_none());
+            assert_eq!(event.kind, "rsync-itemized-update");
+        }
+        let message = "recv host [127.0.0.1] evidence (operator) file 35";
+        let journal =
+            super::rsync_event(message, Some("rsync"), "journal", "raw/journal").expect("journal");
+        assert!(journal.timestamp.is_none());
+        assert_eq!(journal.user.as_deref(), Some("operator"));
+        assert!(super::rsync_event(message, Some("logger"), "journal", "raw/journal").is_none());
+        for line in [
+            "2026/02/30 17:38:45 [42] recv host [127.0.0.1] evidence () file 35",
+            "2026/10/09 17:38:45 [0] recv host [127.0.0.1] evidence () file 35",
+            "2026/10/09 17:38:45 [42] recv host [invalid] evidence () file 35",
+            "2026/10/09 17:38:45 [42] recv host [127.0.0.1] evidence () file 35K",
+            "2026/10/09 17:38:45 [42] sent 35 bytes received 70 bytes",
+        ] {
+            assert!(
+                super::rsync_event(line, None, "import", "raw/rsync").is_none(),
+                "{line}"
+            );
+        }
+    }
+
     #[test]
     fn leading_times_require_a_full_date_and_explicit_offset() {
         for line in [
