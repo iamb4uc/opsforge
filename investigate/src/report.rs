@@ -19,6 +19,30 @@ pub fn generate(root: &Path) -> Result<()> {
     write_completion_script(root, &completion)?;
     let coverage = read_lines::<Coverage>(&root.join("normalized/coverage.jsonl"))?;
     let manifest = read_lines::<EvidenceFile>(&root.join("manifest.jsonl"))?;
+    let checks = if root.join("normalized/checks.jsonl").exists() {
+        read_lines::<crate::checks::CheckResult>(&root.join("normalized/checks.jsonl"))?
+    } else {
+        Vec::new()
+    };
+    let findings = checks
+        .iter()
+        .flat_map(|check| check.findings.iter())
+        .collect::<Vec<_>>();
+    let mut check_states = BTreeMap::<String, u64>::new();
+    let mut severities = BTreeMap::<String, u64>::new();
+    for check in &checks {
+        *check_states
+            .entry(
+                serde_json::to_value(check.state)?
+                    .as_str()
+                    .unwrap_or("unknown")
+                    .to_owned(),
+            )
+            .or_default() += 1;
+    }
+    for finding in &findings {
+        *severities.entry(finding.severity.clone()).or_default() += 1;
+    }
     let failures = coverage
         .iter()
         .filter(|row| matches!(row.state, CoverageState::Failed))
@@ -82,7 +106,7 @@ pub fn generate(root: &Path) -> Result<()> {
         format!(
             "window.caseData = {};\n",
             script_json(&serde_json::json!({
-            "name": info.get("case_id").cloned().unwrap_or_else(|| serde_json::json!(root.file_name().unwrap_or_default().to_string_lossy())), "info": info, "coverage": coverage, "manifest": manifest,
+            "name": info.get("case_id").cloned().unwrap_or_else(|| serde_json::json!(root.file_name().unwrap_or_default().to_string_lossy())), "info": info, "coverage": coverage, "manifest": manifest, "checks": checks,
                     "counts": {"events": count, "uploads": uploads, "completed": completed, "downloads": downloads, "leads": leads, "failed": failures}
                 }))?
         ),
@@ -92,12 +116,19 @@ pub fn generate(root: &Path) -> Result<()> {
         include_str!("dashboard.css"),
     )?;
     write_atomic(root.join("dashboard/app.js"), include_str!("dashboard.js"))?;
-    write_atomic(root.join("findings.json"), b"[]\n")?;
-    write_atomic(root.join("normalized/findings.json"), b"[]\n")?;
+    write_atomic(
+        root.join("findings.json"),
+        serde_json::to_vec_pretty(&findings)?,
+    )?;
+    write_atomic(
+        root.join("normalized/findings.json"),
+        serde_json::to_vec_pretty(&findings)?,
+    )?;
+    let finding_count = findings.len();
     write_atomic(
         root.join("summary.txt"),
         format!(
-            "Output: {}\nFindings: 0\nEvents: {count}\nUpload records: {uploads}\nCompleted upload records: {completed}\nNetwork leads: {leads}\nDownloads: {downloads}\nFailed sources: {failures}\n",
+            "Output: {}\nFindings: {finding_count}\nEvents: {count}\nUpload records: {uploads}\nCompleted upload records: {completed}\nNetwork leads: {leads}\nDownloads: {downloads}\nFailed sources: {failures}\n",
             root.display()
         ),
     )?;
@@ -113,6 +144,11 @@ pub fn generate(root: &Path) -> Result<()> {
         "{}{}",
         bar_graph("Package records by manager", &inventory),
         bar_graph("Activity records by application", &activity)
+    );
+    let check_graphs = format!(
+        "{}{}",
+        bar_graph("Selected check outcomes", &check_states),
+        bar_graph("Check findings by severity", &severities)
     );
     for (name, title, note) in [
         (
@@ -146,6 +182,11 @@ pub fn generate(root: &Path) -> Result<()> {
             "Current package inventory and retained application activity. Package records describe collection-time state, not installation time or proof of traffic. Activity records retain their own source perspective and identity limits.",
         ),
         (
+            "checks",
+            "Linux operational checks",
+            "Selected Bash checks and their original findings. Heuristic findings require review; a successful script exit does not prove every command collected evidence. Target checks cause active probes only against the supplied targets.",
+        ),
+        (
             "collection",
             "Source coverage",
             "Unsupported or absent history is not evidence that activity did not occur.",
@@ -164,6 +205,7 @@ pub fn generate(root: &Path) -> Result<()> {
             match name {
                 "index" => &graphs,
                 "applications" => &application_graphs,
+                "checks" => &check_graphs,
                 _ => "",
             },
         )?;
@@ -275,6 +317,7 @@ fn page(root: &Path, name: &str, title: &str, note: &str, content: &str) -> Resu
         ("downloads", "Downloads"),
         ("network", "Network"),
         ("applications", "Applications"),
+        ("checks", "Checks"),
         ("collection", "Coverage"),
         ("evidence", "Evidence"),
     ];

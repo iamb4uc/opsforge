@@ -27,7 +27,8 @@
   const transferView = ["index", "exfil", "downloads"].includes(view);
   const coverageView = view === "collection";
   const evidenceView = view === "evidence";
-  let base = coverageView ? data.coverage : evidenceView ? data.manifest : all.filter((event) => {
+  const checksView = view === "checks";
+  let base = coverageView ? data.coverage : evidenceView ? data.manifest : checksView ? (data.checks || []) : all.filter((event) => {
     if (view === "exfil") return event.transfer?.direction === "upload";
     if (view === "downloads") return event.transfer?.direction === "download" || event.kind === "download";
     if (view === "index") return event.transfer || event.kind === "download";
@@ -37,15 +38,15 @@
   });
   const ids = new Map(all.map((event, index) => [event, index + 1]));
   base = base.map((row, index) => ({row, index, id: ids.get(row), time: knownTime(row.timestamp || row.acquired_at)}));
-  $("records-title").textContent = view === "index" ? "Transfer records" : coverageView ? "Coverage records" : evidenceView ? "Raw evidence index" : "Records";
+  $("records-title").textContent = view === "index" ? "Transfer records" : coverageView ? "Coverage records" : evidenceView ? "Raw evidence index" : checksView ? "Selected check results" : "Records";
   $("packets").parentElement.hidden = view !== "timeline";
   for (const id of ["application", "from", "until", "sort"]) {
-    if (coverageView || evidenceView) $(id).parentElement.hidden = true;
+    if (coverageView || evidenceView || checksView) $(id).parentElement.hidden = true;
   }
   if (evidenceView) $("status").parentElement.hidden = true;
   const selectors = {
     application: (row) => row.application || "Unattributed",
-    source: (row) => row.source || "Unknown",
+    source: (row) => row.source || row.tool || "Unknown",
     status: (row) => row.state || row.transfer?.status || row.level || "Unknown"
   };
   for (const [id, value] of Object.entries(selectors)) {
@@ -58,7 +59,7 @@
     const option = el("option", selectedStatus); option.value = selectedStatus; $("status").append(option);
   }
   if (selectedStatus && [...$("status").options].some((option) => option.value === selectedStatus)) $("status").value = selectedStatus;
-  const headings = coverageView ? ["Source", "Status", "Detail"] : evidenceView ? ["Original source", "Acquired", "Bytes", "SHA-256", "Retained raw file"] : transferView ? ["Time", "Application / user", "File / object", "Destination / peer", "Bytes", "Outcome", "Direction / perspective", "Evidence"] : ["Time", "Application / user", "Activity", "Destination / path", "Detail", "Evidence"];
+  const headings = coverageView ? ["Source", "Status", "Detail"] : evidenceView ? ["Original source", "Acquired", "Bytes", "SHA-256", "Retained raw file"] : checksView ? ["Check", "Status / exit", "Run time (UTC)", "Detail", "Findings / evidence"] : transferView ? ["Time", "Application / user", "File / object", "Destination / peer", "Bytes", "Outcome", "Direction / perspective", "Evidence"] : ["Time", "Application / user", "Activity", "Destination / path", "Detail", "Evidence"];
   const header = el("tr");
   for (const text of headings) { const th = el("th", text); th.scope = "col"; header.append(th); }
   $("table").querySelector("thead").append(header);
@@ -86,6 +87,17 @@
       cell(row.source); cell(row.state, `status ${row.state}`); cell(row.detail);
     } else if (evidenceView) {
       cell(row.source); cell(row.acquired_at, "time"); cell(fmt(row.bytes), "bytes"); cell(row.sha256, "hash"); cell().append(rawLink(row.path));
+    } else if (checksView) {
+      cell(row.tool);
+      const outcome = cell(row.state, `status ${row.state}`); sub(outcome, `Exit: ${row.exit_code ?? "not retained"}`);
+      const times = cell(row.started_at, "time"); sub(times, `Finished: ${row.finished_at}`);
+      cell(row.detail);
+      const evidence = cell(); evidence.append(rawLink(row.evidence));
+      for (const finding of row.findings) {
+        const detail = el("details"); detail.append(el("summary", `${finding.severity}: ${finding.title}`));
+        detail.append(el("p", `ID: ${finding.id} | Host: ${finding.host} | Category: ${finding.category}`), el("p", finding.recommendation), rawLink(finding.evidence));
+        evidence.append(detail);
+      }
     } else {
       const time = knownTime(row.timestamp);
       const stamp = cell(Number.isFinite(time) ? new Date(time).toISOString().replace("T", " ").replace("Z", " UTC") : row.timestamp || "Unknown time", "time");

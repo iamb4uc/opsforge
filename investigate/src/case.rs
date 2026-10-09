@@ -200,7 +200,7 @@ impl Case {
     }
 
     pub fn copy_evidence(&mut self, source: &Path, name: &str) -> Result<PathBuf> {
-        if name.contains('/') || name == "." || name == ".." {
+        if name.split('/').any(|part| matches!(part, "" | "." | "..")) {
             anyhow::bail!("invalid evidence name");
         }
         let destination = self.root.join("raw").join(name);
@@ -251,13 +251,17 @@ impl Case {
                 Ok(serde_json::from_str::<EvidenceFile>(&line?)?.path)
             })
             .collect::<Result<BTreeSet<_>>>()?;
-        for entry in fs::read_dir(self.root.join("raw"))? {
+        let raw = self.root.join("raw");
+        for entry in walkdir::WalkDir::new(&raw).follow_links(false) {
             let entry = entry?;
-            if !entry.file_type()?.is_file() {
+            if !entry.file_type().is_file() {
                 continue;
             }
-            let name = entry.file_name();
-            let name = name.to_str().context("partial raw filename is not UTF-8")?;
+            let name = entry
+                .path()
+                .strip_prefix(&raw)?
+                .to_str()
+                .context("partial raw filename is not UTF-8")?;
             if recorded.contains(&format!("raw/{name}")) {
                 continue;
             }
@@ -282,7 +286,7 @@ impl Case {
         name: &str,
         interruptible: bool,
     ) -> Result<()> {
-        if name.contains('/') || name == "." || name == ".." {
+        if name.split('/').any(|part| matches!(part, "" | "." | "..")) {
             anyhow::bail!("invalid evidence name");
         }
         let path = self.root.join("raw").join(name);

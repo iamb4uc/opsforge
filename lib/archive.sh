@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 create_evidence_archive() {
+  [ "${OPSFORGE_SKIP_ARCHIVE:-0}" = 1 ] && return 0
   local out_dir="$1"
   local archive
   archive="$(cd "$out_dir" && pwd)/evidence.tar.gz"
