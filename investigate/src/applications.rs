@@ -79,7 +79,7 @@ fn collect_home(
                 if !missing {
                     errors += 1;
                 }
-                case.coverage(&Coverage { source, state: if missing { CoverageState::Empty } else { CoverageState::Failed }, detail: format!("discovery location unavailable: {error}; absent logs do not prove absent activity") })?;
+                case.coverage(&Coverage { source, state: CoverageState::from_io(&error), detail: format!("discovery location unavailable: {error}; absent logs do not prove absent activity") })?;
                 continue;
             }
         }
@@ -92,7 +92,9 @@ fn collect_home(
                     failed += 1;
                     case.coverage(&Coverage {
                         source: source.clone(),
-                        state: CoverageState::Failed,
+                        state: error
+                            .io_error()
+                            .map_or(CoverageState::Failed, CoverageState::from_io),
                         detail: error.to_string(),
                     })?;
                     continue;
@@ -133,7 +135,7 @@ fn collect_home(
                     failed += 1;
                     case.coverage(&Coverage {
                         source: path.display().to_string(),
-                        state: CoverageState::Failed,
+                        state: CoverageState::from_error(&error),
                         detail: format!(
                             "copy or parser failed; inspect any retained raw file: {error}"
                         ),
@@ -206,7 +208,7 @@ fn aws_history(case: &mut Case, path: &Path, name: &str, user: &str) -> Result<u
         case.event(&Event {
             timestamp: jiff::Timestamp::from_millisecond(time).ok().map(|time| time.to_string()),
             source: "aws-cli-history".into(), kind: transfer.as_ref().map_or_else(|| "application-history".into(), |transfer| format!("{}-request", transfer.direction)),
-            application: Some("AWS CLI".into()), user: Some(user.into()), destination: transfer.as_ref().and_then(|transfer| transfer.target.clone()),
+            application: Some("AWS CLI".into()), user: Some(format!("{user} (current account for discovery home)")), destination: transfer.as_ref().and_then(|transfer| transfer.target.clone()),
             detail: format!("command_id={command}; request_id={request:?}; source={source}; event_type={kind}; payload={payload}"),
             evidence: format!("raw/{name}"), level: EvidenceLevel::Recorded,
             transfer, evidence_line: None,
@@ -376,11 +378,9 @@ mod tests {
                 .map(|line| serde_json::from_str(line).expect("event"))
                 .collect();
         assert_eq!(events.len(), 2);
-        assert!(
-            events
-                .iter()
-                .all(|event| event["user"] == "operator" && event.get("transfer").is_none())
-        );
+        assert!(events.iter().all(|event| event["user"]
+            == "operator (current account for discovery home)"
+            && event.get("transfer").is_none()));
         assert!(
             events
                 .iter()
