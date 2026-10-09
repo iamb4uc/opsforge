@@ -66,15 +66,17 @@ The cases contain:
 - `normalized/file-inventory.jsonl`: path, size, and modification time when
   deep inventory is selected.
 - `manifest.jsonl`: source path, copy time, byte count, and SHA-256 for each
-  saved raw file.
+  saved raw file. Interrupted raw files are labelled; their hashes describe saved
+  bytes, without claiming complete acquisition. Unrecorded source mappings stay unknown.
 - `case-info.json`, `completion.json`, and `checksums.sha256`: run identity,
   collection status, and case hashes. A status marker and initial dashboard are
   written before collection. Fatal errors retain the case path and attempt a
   partial report and hashes. The dashboard labels incomplete cases and may show
   an earlier snapshot if final generation failed. Full storage or abrupt
   termination can prevent updating the initial marker; raw evidence and JSONL
-  remain available. Termination signals currently stop the process without
-  finalization.
+  remain available. SIGINT/SIGTERM and Ctrl-C in the run TUI cancel collection,
+  stop owned collector process groups, and attempt a cancelled partial report.
+  SIGKILL, power loss, or inaccessible storage can prevent finalization.
 - `findings.json`, `report.md`, `summary.txt`, and `dashboard/` with Overview,
   Uploads, Timeline, Downloads, Network, Applications, Coverage, and Evidence HTML pages.
 

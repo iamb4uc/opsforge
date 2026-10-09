@@ -2,8 +2,9 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::BTreeSet,
     fs::{self, DirBuilder, File, OpenOptions},
-    io::{BufReader, BufWriter, Read, Write},
+    io::{BufRead, BufReader, BufWriter, Read, Write},
     os::unix::fs::{DirBuilderExt, MetadataExt},
     path::{Path, PathBuf},
 };
@@ -184,6 +185,7 @@ impl Case {
     }
 
     pub fn event(&mut self, event: &Event) -> Result<()> {
+        crate::runtime::check_cancelled()?;
         serde_json::to_writer(&mut self.events, event)?;
         self.events.write_all(b"\n")?;
         self.events.flush()?;
@@ -215,6 +217,7 @@ impl Case {
         let mut bytes = 0_u64;
         let mut buffer = [0_u8; 64 * 1024];
         loop {
+            crate::runtime::check_cancelled()?;
             let count = input.read(&mut buffer)?;
             if count == 0 {
                 break;
@@ -238,6 +241,47 @@ impl Case {
     }
 
     pub fn record_existing(&mut self, source: &str, name: &str) -> Result<()> {
+        self.record_existing_inner(source, name, true)
+    }
+
+    pub(crate) fn record_partial_files(&mut self) -> Result<()> {
+        let recorded = BufReader::new(File::open(self.root.join("manifest.jsonl"))?)
+            .lines()
+            .map(|line| -> Result<String> {
+                Ok(serde_json::from_str::<EvidenceFile>(&line?)?.path)
+            })
+            .collect::<Result<BTreeSet<_>>>()?;
+        for entry in fs::read_dir(self.root.join("raw"))? {
+            let entry = entry?;
+            if !entry.file_type()?.is_file() {
+                continue;
+            }
+            let name = entry.file_name();
+            let name = name.to_str().context("partial raw filename is not UTF-8")?;
+            if recorded.contains(&format!("raw/{name}")) {
+                continue;
+            }
+            let source = match name {
+                "live-traffic.pcap" => {
+                    "tcpdump -i any; collection interrupted; capture completeness unknown; hash covers saved bytes only"
+                }
+                "live-traffic.log" => "tcpdump capture stderr; collection interrupted",
+                "live-traffic-summary.txt" => "tcpdump packet decode; collection interrupted",
+                _ => {
+                    "source mapping unavailable; incomplete collection; hash covers saved bytes only"
+                }
+            };
+            self.record_existing_inner(source, name, false)?;
+        }
+        Ok(())
+    }
+
+    fn record_existing_inner(
+        &mut self,
+        source: &str,
+        name: &str,
+        interruptible: bool,
+    ) -> Result<()> {
         if name.contains('/') || name == "." || name == ".." {
             anyhow::bail!("invalid evidence name");
         }
@@ -247,6 +291,9 @@ impl Case {
         let mut bytes = 0_u64;
         let mut buffer = [0_u8; 64 * 1024];
         loop {
+            if interruptible {
+                crate::runtime::check_cancelled()?;
+            }
             let count = input.read(&mut buffer)?;
             if count == 0 {
                 break;

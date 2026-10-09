@@ -1,3 +1,5 @@
+pub use crate::runtime::install_signal_handlers;
+use crate::runtime::{self, OwnedChild};
 use crate::{
     case::{Case, Coverage, CoverageState, Event, EvidenceLevel},
     config::RunConfig,
@@ -8,13 +10,14 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{BufRead, BufReader, BufWriter, Write},
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Command, Stdio},
     thread,
     time::{Duration, Instant},
 };
 use walkdir::WalkDir;
 
 pub fn run(config: &RunConfig, progress: &impl Fn(&str)) -> Result<PathBuf> {
+    runtime::check_cancelled()?;
     config.validate().map_err(anyhow::Error::msg)?;
     let mut case = Case::new(&config.output_base)?;
     let root = case.root.clone();
@@ -37,14 +40,31 @@ pub fn run(config: &RunConfig, progress: &impl Fn(&str)) -> Result<PathBuf> {
     })();
     if let Err(error) = result {
         let detail = format!("{error:#}");
+        let cancelled = matches!(CoverageState::from_error(&error), CoverageState::Cancelled);
         let _ = case.coverage(&Coverage {
             source: "case-finalization".into(),
-            state: CoverageState::Failed,
+            state: if cancelled {
+                CoverageState::Cancelled
+            } else {
+                CoverageState::Failed
+            },
             detail: detail.clone(),
         });
+        progress("Preserving partial raw-file hashes and building an incomplete report");
+        if let Err(error) = case.record_partial_files() {
+            let _ = case.coverage(&Coverage {
+                source: "partial-raw-manifest".into(),
+                state: CoverageState::Failed,
+                detail: format!("could not record all partial raw files: {error}"),
+            });
+        }
         // Preserve the initial dashboard if a damaged or full output prevents rebuilding it.
         let _ = crate::report::generate(&root);
-        let _ = crate::report::write_completion(&root, "failed", Some(&detail));
+        let _ = crate::report::write_completion(
+            &root,
+            if cancelled { "cancelled" } else { "failed" },
+            Some(&detail),
+        );
         let _ = crate::report::write_checksums(&root);
         return Err(error.context(format!("incomplete case retained at {}", root.display())));
     }
@@ -192,6 +212,7 @@ fn source(
     name: &str,
     collect: impl FnOnce(&mut Case) -> Result<()>,
 ) -> Result<()> {
+    runtime::check_cancelled()?;
     if let Err(error) = collect(case) {
         case.coverage(&Coverage {
             source: name.into(),
@@ -199,7 +220,7 @@ fn source(
             detail: error.to_string(),
         })?;
     }
-    Ok(())
+    runtime::check_cancelled()
 }
 
 fn run_command(case: &mut Case, name: &str, program: &str, args: &[&str]) -> Result<()> {
@@ -214,11 +235,14 @@ fn run_command(case: &mut Case, name: &str, program: &str, args: &[&str]) -> Res
     let raw = format!("{name}.txt");
     let file = File::create(case.root.join("raw").join(&raw))?;
     let error_file = File::create(case.root.join("raw").join(format!("{name}.stderr.txt")))?;
-    let status = Command::new(program)
-        .args(args)
-        .stdout(file)
-        .stderr(error_file)
-        .status()?;
+    let status = OwnedChild::spawn(
+        Command::new(program)
+            .args(args)
+            .stdout(file)
+            .stderr(error_file),
+    )?
+    .wait()?;
+    runtime::check_cancelled()?;
     case.record_existing(&format!("{program} {}", args.join(" ")), &raw)?;
     case.record_existing(&format!("{program} stderr"), &format!("{name}.stderr.txt"))?;
     let bytes = fs::metadata(case.root.join("raw").join(raw))?.len();
@@ -298,12 +322,13 @@ fn collect_journal(case: &mut Case, progress: &impl Fn(&str)) -> Result<()> {
         })?;
         return Ok(());
     }
-    let mut child = Command::new("journalctl")
-        .args(["--no-pager", "-o", "json"])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()?;
-    let stdout = child.stdout.take().context("journal stdout")?;
+    let child = OwnedChild::spawn(
+        Command::new("journalctl")
+            .args(["--no-pager", "-o", "json"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null()),
+    )?;
+    let stdout = child.take_stdout().context("journal stdout")?;
     let mut raw = BufWriter::new(File::create(case.root.join("raw/journal.jsonl"))?);
     let mut count = 0_u64;
     for line in BufReader::new(stdout).lines() {
@@ -399,6 +424,7 @@ fn collect_logs(case: &mut Case, progress: &impl Fn(&str)) -> Result<()> {
     let mut attempted = 0_u64;
     let mut failed = 0_u64;
     for entry in WalkDir::new("/var/log").follow_links(false).max_depth(4) {
+        runtime::check_cancelled()?;
         let entry = match entry {
             Ok(entry) => entry,
             Err(error) => {
@@ -478,6 +504,7 @@ fn import_path(case: &mut Case, path: &Path, prefix: &str, progress: &impl Fn(&s
     let mut failed = 0_u64;
     let mut attempted = 0_u64;
     for entry in WalkDir::new(path).follow_links(false) {
+        crate::runtime::check_cancelled()?;
         let entry = match entry {
             Ok(entry) => entry,
             Err(error) => {
@@ -580,13 +607,16 @@ pub(crate) fn normalize_text_log(
             .write(true)
             .create_new(true)
             .open(case.root.join("raw").join(&stderr_name))?;
-        let status = Command::new("gzip")
-            .args(["-cd", "--"])
-            .arg(raw)
-            .stdin(Stdio::null())
-            .stdout(output)
-            .stderr(errors)
-            .status();
+        let status = OwnedChild::spawn(
+            Command::new("gzip")
+                .args(["-cd", "--"])
+                .arg(raw)
+                .stdin(Stdio::null())
+                .stdout(output)
+                .stderr(errors),
+        )
+        .and_then(|child| child.wait().map_err(Into::into));
+        runtime::check_cancelled()?;
         case.record_existing(
             &format!(
                 "derived gzip -cd output of {}; compressed source: raw/{name}",
@@ -630,6 +660,7 @@ pub(crate) fn normalize_text_log(
     let mut count = 0_u64;
     let mut parser = crate::transfers::Parser::default();
     for line in BufReader::new(File::open(raw)?).lines() {
+        runtime::check_cancelled()?;
         let line = line?;
         count = count.saturating_add(1);
         if let Some(events) =
@@ -701,6 +732,7 @@ fn inventory(case: &mut Case, root: &Path, progress: &impl Fn(&str)) -> Result<(
                 && !path.starts_with(&case_root)
         })
     {
+        runtime::check_cancelled()?;
         let entry = match entry {
             Ok(entry) => entry,
             Err(error) => {
@@ -754,24 +786,10 @@ fn inventory(case: &mut Case, root: &Path, progress: &impl Fn(&str)) -> Result<(
 }
 
 struct LiveCapture {
-    child: Child,
+    child: OwnedChild,
     started: Instant,
     started_at: String,
     seconds: u64,
-}
-
-impl Drop for LiveCapture {
-    fn drop(&mut self) {
-        if self.child.try_wait().ok().flatten().is_none() {
-            let _ = Command::new("kill")
-                .args(["-TERM", &self.child.id().to_string()])
-                .status();
-            if self.child.try_wait().ok().flatten().is_none() {
-                let _ = self.child.kill();
-            }
-            let _ = self.child.wait();
-        }
-    }
 }
 
 fn start_capture(case: &mut Case, seconds: u64) -> Result<Option<LiveCapture>> {
@@ -785,24 +803,25 @@ fn start_capture(case: &mut Case, seconds: u64) -> Result<Option<LiveCapture>> {
     }
     let pcap = case.root.join("raw/live-traffic.pcap");
     let log = File::create(case.root.join("raw/live-traffic.log"))?;
-    let child = Command::new("timeout")
-        .args([
-            "-s",
-            "INT",
-            &format!("{seconds}s"),
-            "tcpdump",
-            "-i",
-            "any",
-            "-nn",
-            "-s",
-            "0",
-            "-U",
-            "-w",
-        ])
-        .arg(&pcap)
-        .stderr(log)
-        .stdout(Stdio::null())
-        .spawn()?;
+    let child = OwnedChild::spawn(
+        Command::new("timeout")
+            .args([
+                "-s",
+                "INT",
+                &format!("{seconds}s"),
+                "tcpdump",
+                "-i",
+                "any",
+                "-nn",
+                "-s",
+                "0",
+                "-U",
+                "-w",
+            ])
+            .arg(&pcap)
+            .stderr(log)
+            .stdout(Stdio::null()),
+    )?;
     Ok(Some(LiveCapture {
         child,
         started: Instant::now(),
@@ -817,6 +836,7 @@ fn finish_capture(
     progress: &impl Fn(&str),
 ) -> Result<()> {
     let status = loop {
+        runtime::check_cancelled()?;
         if let Some(status) = capture.child.try_wait()? {
             break status;
         }
@@ -859,13 +879,14 @@ fn finish_capture(
 }
 
 fn normalize_pcap(case: &mut Case, pcap: &Path) -> Result<()> {
-    let mut child = Command::new("tcpdump")
-        .args(["-nn", "-tttt", "-r"])
-        .arg(pcap)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()?;
-    let stdout = child.stdout.take().context("tcpdump decode stdout")?;
+    let child = OwnedChild::spawn(
+        Command::new("tcpdump")
+            .args(["-nn", "-tttt", "-r"])
+            .arg(pcap)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null()),
+    )?;
+    let stdout = child.take_stdout().context("tcpdump decode stdout")?;
     let mut raw = File::create(case.root.join("raw/live-traffic-summary.txt"))?;
     let mut count = 0_u64;
     for line in BufReader::new(stdout).lines() {
