@@ -135,8 +135,15 @@ Text records retain application/user context from their discovery location.
 Unrecognized records remain leads, with their original lines and raw hashes.
 AWS CLI `history.db` is copied with its available SQLite sidecars, then read from
 an isolated working copy. Command/request IDs, event type, recorded time and
-payload are retained. An API call alone is not assigned a successful upload or
-download outcome. Unknown schemas and malformed rows remain visible failures.
+payload are retained. Matched S3 PutObject/UploadPart/CompleteMultipartUpload and
+GetObject HTTP responses appear as upload/download request records. Successful
+HTTP responses are labelled accepted, rather than full-file completion. A
+unique prior request supplies the actual endpoint, including custom/local
+endpoints; ambiguous targets stay unknown. Local filenames and file byte counts
+are not inferred from stream representations or HTTP header lengths. An API call
+alone has no transfer outcome. Unknown schemas and malformed rows remain visible
+failures. The isolated working database gets an index for request correlation;
+the retained raw database is unchanged.
 Other application database schemas, mail/chat messages and attachment stores
 are not decoded by this discovery slice. Compressed log files are retained but
 are not decompressed yet. Log and history payloads can contain sensitive data.

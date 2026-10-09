@@ -1,6 +1,6 @@
 use crate::{
     browser,
-    case::{Case, Coverage, CoverageState, Event, EvidenceLevel},
+    case::{Case, Coverage, CoverageState, Event, EvidenceLevel, Transfer},
     collect,
 };
 use anyhow::Result;
@@ -162,6 +162,9 @@ fn is_log(path: &Path) -> bool {
 
 fn aws_history(case: &mut Case, path: &Path, name: &str, user: &str) -> Result<u64> {
     let db = browser::snapshot(case, path, name)?;
+    db.execute_batch(
+        "CREATE INDEX IF NOT EXISTS opsforge_history_lookup ON records(id,request_id,timestamp)",
+    )?;
     let mut statement = db.prepare(
         "SELECT id,request_id,source,event_type,timestamp,payload FROM records ORDER BY timestamp",
     )?;
@@ -191,13 +194,22 @@ fn aws_history(case: &mut Case, path: &Path, name: &str, user: &str) -> Result<u
                 continue;
             }
         };
+        let transfer = if kind == "HTTP_RESPONSE" {
+            request
+                .as_deref()
+                .map(|request| aws_transfer(&db, &command, request, time, &payload))
+                .transpose()?
+                .flatten()
+        } else {
+            None
+        };
         case.event(&Event {
             timestamp: jiff::Timestamp::from_millisecond(time).ok().map(|time| time.to_string()),
-            source: "aws-cli-history".into(), kind: "application-history".into(),
-            application: Some("AWS CLI".into()), user: Some(user.into()), destination: None,
+            source: "aws-cli-history".into(), kind: transfer.as_ref().map_or_else(|| "application-history".into(), |transfer| format!("{}-request", transfer.direction)),
+            application: Some("AWS CLI".into()), user: Some(user.into()), destination: transfer.as_ref().and_then(|transfer| transfer.target.clone()),
             detail: format!("command_id={command}; request_id={request:?}; source={source}; event_type={kind}; payload={payload}"),
             evidence: format!("raw/{name}"), level: EvidenceLevel::Recorded,
-            transfer: None, evidence_line: None,
+            transfer, evidence_line: None,
         })?;
         count += 1;
     }
@@ -207,10 +219,135 @@ fn aws_history(case: &mut Case, path: &Path, name: &str, user: &str) -> Result<u
     Ok(count)
 }
 
+fn aws_transfer(
+    db: &rusqlite::Connection,
+    command: &str,
+    request: &str,
+    time: i64,
+    response: &str,
+) -> Result<Option<Transfer>> {
+    let mut statement = db.prepare("SELECT event_type,payload FROM records WHERE id=?1 AND request_id=?2 AND timestamp<=?3 AND event_type IN ('API_CALL','HTTP_REQUEST') ORDER BY timestamp")?;
+    let mut rows = statement.query(rusqlite::params![command, request, time])?;
+    let mut calls = 0;
+    let mut operation = None;
+    let mut targets = BTreeSet::new();
+    while let Some(row) = rows.next()? {
+        let kind: String = row.get(0)?;
+        let payload: String = row.get(1)?;
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&payload) else {
+            return Ok(None);
+        };
+        if kind == "API_CALL" {
+            calls += 1;
+            if value["service"] == "s3" {
+                operation = value["operation"].as_str().map(str::to_owned);
+            }
+        } else if let (Some(url), Some(method)) = (value["url"].as_str(), value["method"].as_str())
+        {
+            targets.insert((url.to_owned(), method.to_owned()));
+        }
+    }
+    if calls != 1 {
+        return Ok(None);
+    }
+    let direction = match operation.as_deref() {
+        Some("PutObject" | "UploadPart" | "CompleteMultipartUpload") => "upload",
+        Some("GetObject") => "download",
+        _ => return Ok(None),
+    };
+    let Ok(response) = serde_json::from_str::<serde_json::Value>(response) else {
+        return Ok(None);
+    };
+    if response["context"]["operation_name"]
+        .as_str()
+        .is_some_and(|name| Some(name) != operation.as_deref())
+    {
+        return Ok(None);
+    }
+    let status = match response["status_code"].as_u64() {
+        Some(200..=299) => "accepted",
+        Some(400..=599) => "failed",
+        _ => "unknown",
+    };
+    let (target, method) = if targets.len() == 1 {
+        let (target, method) = targets.into_iter().next().expect("one target");
+        let expected = match operation.as_deref() {
+            Some("GetObject") => "GET",
+            Some("CompleteMultipartUpload") => "POST",
+            _ => "PUT",
+        };
+        if method != expected {
+            return Ok(None);
+        }
+        (Some(target), Some(method))
+    } else {
+        (None, None)
+    };
+    Ok(Some(Transfer {
+        direction: direction.into(), status: status.into(), protocol: "S3 API".into(),
+        perspective: "client".into(), file: None, target, peer: None, bytes: None,
+        bytes_basis: "API/HTTP outcome only; request/response headers do not prove file bytes or full download completion".into(),
+        method: operation.map(|operation| format!("{operation} / {}", method.as_deref().unwrap_or("HTTP method unknown"))),
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn aws_http_outcomes_require_matching_api_context_and_keep_actual_endpoint() {
+        let db = rusqlite::Connection::open_in_memory().expect("database");
+        db.execute_batch("CREATE TABLE records(id TEXT,request_id TEXT,source TEXT,event_type TEXT,timestamp INTEGER,payload TEXT);
+            INSERT INTO records VALUES('cmd','req','BOTOCORE','API_CALL',1000,'{\"service\":\"s3\",\"operation\":\"PutObject\"}'),
+                ('cmd','req','BOTOCORE','HTTP_REQUEST',1001,'{\"url\":\"http://127.0.0.1/uploads/file\",\"method\":\"PUT\"}');").expect("schema");
+        let response = r#"{"status_code":201,"headers":{"Content-Length":"0"}}"#;
+        let transfer = aws_transfer(&db, "cmd", "req", 1002, response)
+            .expect("parse")
+            .expect("transfer");
+        assert_eq!(transfer.direction, "upload");
+        assert_eq!(transfer.status, "accepted");
+        assert_eq!(
+            transfer.target.as_deref(),
+            Some("http://127.0.0.1/uploads/file")
+        );
+        assert!(transfer.file.is_none() && transfer.bytes.is_none());
+        assert_eq!(
+            aws_transfer(&db, "cmd", "req", 1002, r#"{"status_code":403}"#)
+                .expect("failed response")
+                .expect("transfer")
+                .status,
+            "failed"
+        );
+        assert!(
+            aws_transfer(
+                &db,
+                "cmd",
+                "req",
+                1002,
+                r#"{"status_code":200,"context":{"operation_name":"GetObject"}}"#
+            )
+            .expect("mismatched operation")
+            .is_none()
+        );
+        assert!(
+            aws_transfer(&db, "cmd", "missing", 1002, response)
+                .expect("missing context")
+                .is_none()
+        );
+        assert!(
+            aws_transfer(&db, "cmd", "req", 999, response)
+                .expect("future context")
+                .is_none()
+        );
+        db.execute_batch("INSERT INTO records VALUES('cmd','req','BOTOCORE','API_CALL',1002,'{\"service\":\"s3\",\"operation\":\"GetObject\"}');").expect("ambiguous context");
+        assert!(
+            aws_transfer(&db, "cmd", "req", 1003, response)
+                .expect("ambiguous")
+                .is_none()
+        );
+    }
 
     #[test]
     fn application_logs_preserve_identity_raw_files_and_unknown_outcomes() {
