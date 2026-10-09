@@ -71,7 +71,7 @@ The cases contain:
   completion marker, and hashes of the finished case files. An interrupted
   case keeps saved evidence but has no completion marker.
 - `findings.json`, `report.md`, `summary.txt`, and `dashboard/` with Overview,
-  Uploads, Timeline, Downloads, Network, Coverage, and Evidence HTML pages.
+  Uploads, Timeline, Downloads, Network, Applications, Coverage, and Evidence HTML pages.
 
 The dashboard opens locally without a server or external assets. Its local
 JavaScript data contains every normalized event; search, application/source/outcome
@@ -90,6 +90,13 @@ the retained system journal and `/var/log` files, snapshots Firefox and
 Chromium-family history, reads Chromium and Firefox download records, copies supplied
 logs, and captures live packets on all interfaces. The live timer starts when
 the case starts. Sources are saved and hashed as they are collected.
+
+Applications displays current package-manager records and application-attributed
+activity with the existing search, source, outcome and time filters. Package
+records retain versions/states and raw line links. Their timestamp is collection
+time, not installation time, and they do not establish execution or traffic.
+XBPS labels keep the complete package-version identifier. Missing managers are
+unavailable sources; an empty activity history does not prove no past traffic.
 
 Generic text logs are normalized line by line. Keyword matches appear as
 network leads; their original lines remain in `raw/`. Browser visits are

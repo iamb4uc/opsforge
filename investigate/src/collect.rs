@@ -83,15 +83,35 @@ pub fn run(config: &RunConfig, progress: &impl Fn(&str)) -> Result<PathBuf> {
         })?;
         source(&mut case, "active-socket-normalization", normalize_sockets)?;
         for (name, program, args) in [
-            ("packages-dpkg", "dpkg-query", vec!["-W"]),
-            ("packages-rpm", "rpm", vec!["-qa"]),
+            (
+                "packages-dpkg",
+                "dpkg-query",
+                vec![
+                    "-W",
+                    "-f=${binary:Package}\t${Version}\t${Architecture}\t${db:Status-Abbrev}\n",
+                ],
+            ),
+            (
+                "packages-rpm",
+                "rpm",
+                vec!["-qa", "--qf", "%{NAME}\t%{VERSION}-%{RELEASE}\t%{ARCH}\n"],
+            ),
             ("packages-xbps", "xbps-query", vec!["-l"]),
             ("packages-pacman", "pacman", vec!["-Q"]),
-            ("apps-flatpak", "flatpak", vec!["list", "--app"]),
+            (
+                "apps-flatpak",
+                "flatpak",
+                vec![
+                    "list",
+                    "--app",
+                    "--columns=application,version,branch,origin",
+                ],
+            ),
             ("apps-snap", "snap", vec!["list"]),
         ] {
             source(&mut case, name, |case| {
-                run_command(case, name, program, &args)
+                run_command(case, name, program, &args)?;
+                crate::applications::inventory(case, name)
             })?;
         }
         progress("Collecting retained system journal");
