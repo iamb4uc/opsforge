@@ -103,7 +103,7 @@ pub fn run(config: &RunConfig, progress: &impl Fn(&str)) -> Result<PathBuf> {
     if config.exfil || config.downloads {
         progress("Collecting retained application transfer logs");
         source(&mut case, "application-transfer-logs", |case| {
-            collect_application_logs(case, progress)
+            crate::applications::collect(case, progress)
         })?;
         progress("Collecting browser activity and downloads");
         source(&mut case, "browser-profiles", |case| {
@@ -359,7 +359,8 @@ fn collect_logs(case: &mut Case, progress: &impl Fn(&str)) -> Result<()> {
             Ok(_) => {
                 count = count.saturating_add(1);
                 let raw = case.root.join("raw").join(&name);
-                let parsed = normalize_text_log(case, &raw, &name, "system-log", entry.path());
+                let parsed =
+                    normalize_text_log(case, &raw, &name, "system-log", entry.path(), None);
                 case.coverage(&Coverage {
                     source: entry.path().display().to_string(),
                     state: if parsed.is_ok() {
@@ -440,7 +441,7 @@ fn import_path(case: &mut Case, path: &Path, prefix: &str, progress: &impl Fn(&s
             continue;
         }
         let raw = case.root.join("raw").join(&name);
-        let parsed = normalize_text_log(case, &raw, &name, "imported-log", entry.path());
+        let parsed = normalize_text_log(case, &raw, &name, "imported-log", entry.path(), None);
         case.coverage(&Coverage {
             source: entry.path().display().to_string(),
             state: if parsed.is_ok() {
@@ -474,65 +475,13 @@ fn import_path(case: &mut Case, path: &Path, prefix: &str, progress: &impl Fn(&s
     Ok(())
 }
 
-fn collect_application_logs(case: &mut Case, progress: &impl Fn(&str)) -> Result<()> {
-    let passwd = fs::read_to_string("/etc/passwd")?;
-    let mut paths = std::collections::BTreeSet::new();
-    for line in passwd.lines() {
-        let fields: Vec<_> = line.split(':').collect();
-        if fields.len() < 6 || fields[5] == "/" {
-            continue;
-        }
-        let home = Path::new(fields[5]);
-        for relative in [
-            ".cache/rclone",
-            ".local/state/rclone",
-            ".local/share/rclone",
-            ".config/rclone/logs",
-        ] {
-            let directory = home.join(relative);
-            if !directory.is_dir() {
-                continue;
-            }
-            for entry in WalkDir::new(directory).follow_links(false).max_depth(3) {
-                match entry {
-                    Ok(entry)
-                        if entry.file_type().is_file()
-                            && matches!(
-                                entry.path().extension().and_then(|ext| ext.to_str()),
-                                Some("log" | "jsonl")
-                            ) =>
-                    {
-                        paths.insert(entry.path().to_path_buf());
-                    }
-                    Err(error) => case.coverage(&Coverage {
-                        source: "application-transfer-logs".into(),
-                        state: CoverageState::Failed,
-                        detail: error.to_string(),
-                    })?,
-                    _ => {}
-                }
-            }
-        }
-        for relative in ["rclone.log", ".cache/rclone.log"] {
-            let path = home.join(relative);
-            if path.is_file() {
-                paths.insert(path);
-            }
-        }
-    }
-    for (index, path) in paths.iter().enumerate() {
-        import_path(case, path, &format!("application-{index:03}"), progress)?;
-    }
-    case.coverage(&Coverage { source: "application-transfer-logs".into(), state: if paths.is_empty() { CoverageState::Empty } else { CoverageState::Collected }, detail: format!("{} rclone log paths found in documented user locations; use --import for other locations or application logs; logging may never have been enabled", paths.len()) })?;
-    Ok(())
-}
-
-fn normalize_text_log(
+pub(crate) fn normalize_text_log(
     case: &mut Case,
     raw: &Path,
     name: &str,
     source: &str,
     original: &Path,
+    context: Option<(&str, &str)>,
 ) -> Result<u64> {
     if original
         .extension()
@@ -554,6 +503,14 @@ fn normalize_text_log(
         let line = line?;
         count = count.saturating_add(1);
         if let Some(mut event) = parser.parse(&line, source, &format!("raw/{name}")) {
+            if let Some((application, user)) = context {
+                if event.application.is_none() {
+                    event.application = Some(application.into());
+                }
+                if event.user.is_none() {
+                    event.user = Some(user.into());
+                }
+            }
             event.evidence_line = Some(count);
             case.event(&event)?;
             continue;
@@ -574,8 +531,8 @@ fn normalize_text_log(
                 "imported-record"
             }
             .into(),
-            application: None,
-            user: None,
+            application: context.map(|(application, _)| application.into()),
+            user: context.map(|(_, user)| user.into()),
             destination: None,
             detail: line,
             evidence: format!("raw/{name}"),

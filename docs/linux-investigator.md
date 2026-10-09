@@ -113,6 +113,34 @@ Format references: [NGINX access logging](https://docs.nginx.com/nginx/admin-gui
 [vsftpd transfer logging](https://security.appspot.com/vsftpd/vsftpd_conf.html),
 and [HAR request metadata](https://w3c.github.io/web-performance/specs/HAR/Overview.html).
 
+## Application log discovery
+
+The runner searches existing log locations beneath each distinct user home:
+rclone, rsync, OpenSSH, FileZilla, AWS/Azure/gcloud CLI, Nextcloud, Syncthing,
+Thunderbird, Evolution, Slack, Discord, Element, Signal, curl and wget. Discovery
+uses a fixed location list, a depth limit of eight and log names such as `.log`,
+`.log.*` and `.jsonl`. Custom paths and operator exports still need `--import`.
+It does not enable logging or create missing history. A missing discovery path
+does not establish whether the application was installed or used.
+
+Text records retain application/user context from their discovery location.
+Unrecognized records remain leads, with their original lines and raw hashes.
+AWS CLI `history.db` is copied with its available SQLite sidecars, then read from
+an isolated working copy. Command/request IDs, event type, recorded time and
+payload are retained. An API call alone is not assigned a successful upload or
+download outcome. Unknown schemas and malformed rows remain visible failures.
+Other application database schemas, mail/chat messages and attachment stores
+are not decoded by this discovery slice. Compressed log files are retained but
+are not decompressed yet. Log and history payloads can contain sensitive data.
+
+Discovery roots that are symbolic links are skipped explicitly; import their
+trusted targets to collect them. Credential/configuration files are outside
+the log-name search. Live SQLite copies retain the same consistency limitation
+as browser collection.
+
+AWS history format: [CLI history reference](https://docs.aws.amazon.com/cli/latest/reference/history/),
+[SQLite record implementation](https://github.com/aws/aws-cli/blob/v2/awscli/customizations/history/db.py).
+
 Browser collection preserves the database and any available SQLite WAL,
 shared-memory, and rollback journal files. Parsing uses a separate working copy
 under `normalized/`, so an open browser's exclusive database lock cannot stall

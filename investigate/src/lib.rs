@@ -1,3 +1,4 @@
+mod applications;
 pub mod browser;
 pub mod case;
 pub mod collect;

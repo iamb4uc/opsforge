@@ -83,7 +83,7 @@ pub fn collect(case: &mut Case, progress: &impl Fn(&str)) -> Result<()> {
     Ok(())
 }
 
-fn user_homes() -> Result<Vec<(String, PathBuf)>> {
+pub(crate) fn user_homes() -> Result<Vec<(String, PathBuf)>> {
     let passwd = fs::read_to_string("/etc/passwd")?;
     let mut homes = Vec::new();
     for line in passwd.lines() {
@@ -101,7 +101,7 @@ fn user_homes() -> Result<Vec<(String, PathBuf)>> {
     Ok(homes)
 }
 
-fn snapshot(case: &mut Case, source: &Path, name: &str) -> Result<Connection> {
+pub(crate) fn snapshot(case: &mut Case, source: &Path, name: &str) -> Result<Connection> {
     let working = case.root.join("normalized").join(name);
     let raw = case.copy_evidence(source, name)?;
     fs::copy(raw, &working)?;
