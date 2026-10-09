@@ -159,6 +159,16 @@ Supported retained sources:
   their recorded timestamp and current UID-name mapping; plain syslog lines do
   not gain an invented year/timezone, peer or account. This needs existing
   SFTP transaction logging; ordinary SSH login logs do not retain file counters.
+- rsync default daemon logs: send/recv direction from the server perspective,
+  peer IP, module, logged authentication identity and object length (`%l`).
+  These records can describe metadata updates too; status remains observed,
+  actual payload/wire bytes and completion remain unknown. Default client
+  itemized logs are leads without inferred network direction: local copies use
+  the same format. Plain log timestamps have no retained timezone. Custom log
+  formats and job totals are not interpreted as per-file transfers. Supply
+  custom paths with `--import`; journal messages need a retained rsync process
+  identity. See the [rsync logging format](https://download.samba.org/pub/rsync/rsyncd.conf.5)
+  and [itemized update semantics](https://download.samba.org/pub/rsync/rsync.1).
 - rclone JSON logs: recorded object name and copy outcome. Direction and remote
   destination require retained command context plus a recognized network backend
   record. Copy/sync/move/copyto/moveto accept recognized global/command flags;
