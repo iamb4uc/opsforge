@@ -1,10 +1,44 @@
 use serde::{Deserialize, Serialize};
-use std::{fmt, path::PathBuf, str::FromStr, time::Duration};
+use std::{
+    fmt,
+    path::PathBuf,
+    str::FromStr,
+    time::{Duration, Instant},
+};
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct CaptureDuration {
     seconds: u64,
     label: String,
+}
+
+impl<'de> Deserialize<'de> for CaptureDuration {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct LegacyDuration {
+            seconds: u64,
+            label: String,
+        }
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Input {
+            Label(String),
+            Legacy(LegacyDuration),
+        }
+        let input = Input::deserialize(deserializer)?;
+        let (label, seconds) = match input {
+            Input::Label(label) => (label, None),
+            Input::Legacy(value) => (value.label, Some(value.seconds)),
+        };
+        let duration: Self = label.parse().map_err(serde::de::Error::custom)?;
+        if seconds.is_some_and(|seconds| seconds != duration.seconds) {
+            return Err(serde::de::Error::custom(
+                "capture seconds do not match the label",
+            ));
+        }
+        Ok(duration)
+    }
 }
 
 impl CaptureDuration {
@@ -63,6 +97,7 @@ impl FromStr for CaptureDuration {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct RunConfig {
     pub output_base: PathBuf,
     pub exfil: bool,
@@ -74,7 +109,29 @@ pub struct RunConfig {
     pub imports: Vec<PathBuf>,
 }
 
+impl Default for RunConfig {
+    fn default() -> Self {
+        Self::default_for(PathBuf::from("/var/lib/opsforge/cases"))
+    }
+}
+
 impl RunConfig {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.output_base.as_os_str().is_empty() {
+            return Err("case output path must not be empty");
+        }
+        if self.imports.iter().any(|path| path.as_os_str().is_empty()) {
+            return Err("import paths must not be empty");
+        }
+        if Instant::now()
+            .checked_add(Duration::from_secs(self.capture_duration.seconds))
+            .is_none()
+        {
+            return Err("capture duration exceeds the supported clock range");
+        }
+        Ok(())
+    }
+
     #[must_use]
     pub fn default_for(output_base: PathBuf) -> Self {
         Self {
@@ -95,7 +152,7 @@ impl RunConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::CaptureDuration;
+    use super::{CaptureDuration, RunConfig};
     use std::time::Duration;
 
     #[test]
@@ -122,5 +179,28 @@ mod tests {
         ] {
             assert!(input.parse::<CaptureDuration>().is_err(), "{input}");
         }
+    }
+
+    #[test]
+    fn config_defaults_and_legacy_duration_round_trip() {
+        let config: RunConfig =
+            serde_json::from_str(r#"{"capture_duration":"2m","live_capture":false}"#)
+                .expect("partial config");
+        assert_eq!(config.capture_duration.seconds(), 120);
+        assert!(!config.live_capture);
+        assert!(config.exfil);
+        config.validate().expect("valid config");
+        let saved = serde_json::to_string(&config).expect("serialize");
+        let restored: RunConfig = serde_json::from_str(&saved).expect("legacy object duration");
+        assert_eq!(restored.capture_duration, config.capture_duration);
+        for input in [
+            r#"{"capture_duration":{"seconds":0,"label":"5m"}}"#,
+            r#"{"capture_duration":"0s"}"#,
+            r#"{"live_capure":false}"#,
+        ] {
+            assert!(serde_json::from_str::<RunConfig>(input).is_err(), "{input}");
+        }
+        let empty: RunConfig = serde_json::from_str(r#"{"output_base":""}"#).expect("decode empty");
+        assert!(empty.validate().is_err());
     }
 }

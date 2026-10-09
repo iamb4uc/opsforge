@@ -15,6 +15,7 @@ use std::{
 use walkdir::WalkDir;
 
 pub fn run(config: &RunConfig, progress: &impl Fn(&str)) -> Result<PathBuf> {
+    config.validate().map_err(anyhow::Error::msg)?;
     let mut case = Case::new(&config.output_base)?;
     let root = case.root.clone();
     fs::write(root.join("config.json"), serde_json::to_vec_pretty(config)?)?;
