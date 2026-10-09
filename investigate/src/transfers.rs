@@ -1,5 +1,6 @@
 use crate::case::{Event, EvidenceLevel, Transfer};
 use serde_json::Value;
+use std::collections::BTreeMap;
 
 pub(crate) fn leading_timestamp(line: &str) -> Option<String> {
     let stamp = line.split_whitespace().next()?.trim_matches(['[', ']']);
@@ -177,7 +178,14 @@ pub(crate) fn sftp_events(
 }
 
 #[derive(Default)]
+struct FileZillaSession {
+    peer: Option<String>,
+    pending: Option<(String, String, String)>,
+}
+
+#[derive(Default)]
 pub struct Parser {
+    filezilla: BTreeMap<(u32, u32), FileZillaSession>,
     rclone_paths: Option<(String, String, bool)>,
     network_backend: Option<String>,
     active_runs: u32,
@@ -185,7 +193,130 @@ pub struct Parser {
 }
 
 impl Parser {
+    fn filezilla_event(&mut self, line: &str, source: &str, raw: &str) -> Option<Event> {
+        let date = line.get(..10)?;
+        let time = line.get(11..19)?;
+        if line.get(10..11)? != " " || line.get(19..20)? != " " {
+            return None;
+        }
+        let timestamp = format!("{date}T{time}");
+        timestamp.parse::<jiff::civil::DateTime>().ok()?;
+        let (pid, rest) = line.get(20..)?.split_once(' ')?;
+        let (engine, rest) = rest.split_once(' ')?;
+        let key = (pid.parse::<u32>().ok()?, engine.parse::<u32>().ok()?);
+        if key.0 == 0 || key.1 == 0 {
+            return None;
+        }
+        let (kind, message) = rest.split_once(": ")?;
+        if !matches!(kind, "Status" | "Error") {
+            return None;
+        }
+        if let Some(endpoint) = message
+            .strip_prefix("Connecting to ")
+            .and_then(|value| value.strip_suffix("..."))
+        {
+            if self.filezilla.len() >= 4096 {
+                self.filezilla.clear();
+            }
+            self.filezilla.insert(
+                key,
+                FileZillaSession {
+                    peer: Some(endpoint.into()),
+                    pending: None,
+                },
+            );
+            return None;
+        }
+        if message == "Disconnected from server"
+            || message.starts_with("Could not connect to server")
+        {
+            self.filezilla.remove(&key);
+            return None;
+        }
+        let start = message
+            .strip_prefix("Starting upload of ")
+            .map(|file| ("upload", file))
+            .or_else(|| {
+                message
+                    .strip_prefix("Starting download of ")
+                    .map(|file| ("download", file))
+            });
+        if let Some((direction, file)) = start.filter(|(_, file)| !file.is_empty()) {
+            if self.filezilla.len() >= 4096 && !self.filezilla.contains_key(&key) {
+                self.filezilla.clear();
+            }
+            self.filezilla.entry(key).or_default().pending =
+                Some((direction.into(), file.into(), line.into()));
+            return Some(Event {
+                timestamp: Some(timestamp),
+                source: source.into(),
+                kind: "filezilla-transfer-start".into(),
+                application: Some("FileZilla".into()),
+                user: None,
+                destination: Some(file.into()),
+                detail: format!(
+                    "{line}\nTransfer start is intent; outcome and transferred bytes are not yet recorded. Source-local time has no retained timezone."
+                ),
+                evidence: raw.into(),
+                level: EvidenceLevel::Lead,
+                transfer: None,
+                evidence_line: None,
+            });
+        }
+        let (status, counter) = if message == "File transfer successful" {
+            ("completed", None)
+        } else if let Some(counter) = message.strip_prefix("File transfer successful, transferred ")
+        {
+            ("completed", Some(counter))
+        } else if message == "File transfer skipped" {
+            ("skipped", None)
+        } else if message == "File transfer aborted by user" {
+            ("interrupted", None)
+        } else if let Some(counter) =
+            message.strip_prefix("File transfer aborted by user after transferring ")
+        {
+            ("interrupted", Some(counter))
+        } else if message == "File transfer failed" || message == "Critical file transfer error" {
+            ("failed", None)
+        } else if let Some(counter) = message
+            .strip_prefix("File transfer failed after transferring ")
+            .or_else(|| message.strip_prefix("Critical file transfer error after transferring "))
+        {
+            ("failed", Some(counter))
+        } else {
+            return None;
+        };
+        let mut unknown = FileZillaSession::default();
+        let session = self.filezilla.get_mut(&key).unwrap_or(&mut unknown);
+        let pending = session.pending.take();
+        let (direction, file, start) = pending.map_or(
+            ("unknown".into(), None, "Matching start not retained".into()),
+            |(direction, file, start)| (direction, Some(file), start),
+        );
+        let bytes = counter
+            .and_then(|counter| counter.split_once(" B in "))
+            .and_then(|(bytes, _)| {
+                (!bytes.is_empty() && bytes.bytes().all(|byte| byte.is_ascii_digit()))
+                    .then_some(bytes)
+            })
+            .and_then(|bytes| bytes.parse::<u64>().ok());
+        Some(Event {
+            timestamp: Some(timestamp), source: source.into(), kind: if direction == "unknown" { "transfer".into() } else { format!("{direction}-transfer") },
+            application: Some("FileZilla".into()), user: None, destination: session.peer.clone(),
+            detail: format!("{line}\nMatched by logged process/engine {}/{}: {start}. Outcome is the client-reported operation result. Peer is the recorded connection endpoint; protocol, authentication identity and the opposite-side file path are not inferred. Source-local time has no retained timezone; rounded/localized byte counters remain unknown.", key.0,key.1),
+            evidence: raw.into(), level: EvidenceLevel::Recorded,
+            transfer: Some(Transfer {
+                direction, status: status.into(), protocol: "unknown".into(), perspective: "client".into(), file,
+                target: session.peer.clone(), peer: session.peer.clone(), bytes,
+                bytes_basis: "client transfer progress (current offset minus starting offset); not full object size or wire bytes; resumed/skipped bytes excluded".into(), method: None,
+            }), evidence_line: None,
+        })
+    }
+
     pub fn parse(&mut self, line: &str, source: &str, raw: &str) -> Option<Event> {
+        if let Some(event) = self.filezilla_event(line, source, raw) {
+            return Some(event);
+        }
         if let Some(event) = rsync_event(line, None, source, raw) {
             return Some(event);
         }
@@ -749,6 +880,84 @@ pub fn har_events(record: &Value, raw: &str) -> Option<Vec<Event>> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn filezilla_engine_ids_isolate_interleaved_results_and_rounded_bytes() {
+        let mut parser = super::Parser::default();
+        for (engine, direction, file) in [
+            (2, "upload", "/local/file with spaces.txt"),
+            (3, "download", "/remote/file.txt"),
+        ] {
+            parser.parse(
+                &format!(
+                    "2026-10-09 18:04:30 42 {engine} Status: Connecting to 127.0.0.1:35589..."
+                ),
+                "import",
+                "raw/log",
+            );
+            let start = parser
+                .parse(
+                    &format!(
+                        "2026-10-09 18:04:30 42 {engine} Status: Starting {direction} of {file}"
+                    ),
+                    "import",
+                    "raw/log",
+                )
+                .expect("start");
+            assert!(start.transfer.is_none());
+        }
+        let result = parser.parse("2026-10-09 18:04:31 42 3 Status: File transfer successful, transferred 1.2 KiB in 1 second", "import", "raw/log").expect("download");
+        let download = result.transfer.expect("transfer");
+        assert_eq!(download.direction, "download");
+        assert_eq!(download.file.as_deref(), Some("/remote/file.txt"));
+        assert!(download.bytes.is_none());
+        let result = parser.parse("2026-10-09 18:04:31 42 2 Status: File transfer successful, transferred 26 B in 1 second", "import", "raw/log").expect("upload");
+        let upload = result.transfer.expect("transfer");
+        assert_eq!(upload.direction, "upload");
+        assert_eq!(upload.status, "completed");
+        assert_eq!(upload.bytes, Some(26));
+        assert_eq!(upload.peer.as_deref(), Some("127.0.0.1:35589"));
+        assert_eq!(upload.file.as_deref(), Some("/local/file with spaces.txt"));
+        let orphan = parser
+            .parse(
+                "2026-10-09 18:04:32 43 2 Status: File transfer successful",
+                "import",
+                "raw/log",
+            )
+            .expect("orphan")
+            .transfer
+            .expect("transfer");
+        assert_eq!(orphan.direction, "unknown");
+        assert!(orphan.file.is_none() && orphan.peer.is_none());
+        parser.parse(
+            "2026-10-09 18:04:32 42 2 Status: Starting upload of /stale",
+            "import",
+            "raw/log",
+        );
+        parser.parse(
+            "2026-10-09 18:04:32 42 2 Status: Connecting to other.example:21...",
+            "import",
+            "raw/log",
+        );
+        let retry = parser
+            .parse(
+                "2026-10-09 18:04:33 42 2 Error: File transfer failed",
+                "import",
+                "raw/log",
+            )
+            .expect("retry")
+            .transfer
+            .expect("transfer");
+        assert_eq!(retry.direction, "unknown");
+        assert!(retry.file.is_none());
+        for line in [
+            "2026-02-30 18:04:30 42 2 Status: File transfer successful",
+            "2026-10-09 18:04:30 0 2 Status: File transfer successful",
+            "2026-10-09 18:04:30 42 2 Response: 226 Transfer complete.",
+        ] {
+            assert!(parser.filezilla_event(line, "import", "raw/log").is_none());
+        }
+    }
+
     #[test]
     fn rsync_records_keep_object_length_and_local_updates_distinct() {
         let mut parser = super::Parser::default();
