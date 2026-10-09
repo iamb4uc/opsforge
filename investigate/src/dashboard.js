@@ -28,6 +28,7 @@
     if (view === "downloads") return event.transfer?.direction === "download" || event.kind === "download";
     if (view === "index") return event.transfer || event.kind === "download";
     if (view === "network") return event.transfer || ["network-lead", "active-connection", "connection-closed", "inbound-listener", "packet", "browser-visit"].includes(event.kind);
+    if (view === "applications") return Boolean(event.application);
     return true;
   });
   const ids = new Map(all.map((event, index) => [event, index + 1]));

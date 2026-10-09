@@ -4,7 +4,12 @@ use crate::{
     collect,
 };
 use anyhow::Result;
-use std::{collections::BTreeSet, path::Path};
+use std::{
+    collections::BTreeSet,
+    fs::File,
+    io::{BufRead, BufReader},
+    path::Path,
+};
 use walkdir::WalkDir;
 
 const LOCATIONS: &[(&str, &str)] = &[
@@ -35,6 +40,62 @@ const LOCATIONS: &[(&str, &str)] = &[
     ("curl", "curl.log"),
     ("wget", "wget-log"),
 ];
+
+pub(crate) fn inventory(case: &mut Case, source: &str) -> Result<()> {
+    let evidence = format!("raw/{source}.txt");
+    let path = case.root.join(&evidence);
+    let input = match File::open(path) {
+        Ok(input) => input,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    let timestamp = jiff::Timestamp::now().to_string();
+    for (index, line) in BufReader::new(input).lines().enumerate() {
+        let line = line?;
+        if let Some(event) = inventory_event(
+            source,
+            &line,
+            &timestamp,
+            &evidence,
+            u64::try_from(index)? + 1,
+        ) {
+            case.event(&event)?;
+        }
+    }
+    Ok(())
+}
+
+fn inventory_event(
+    source: &str,
+    line: &str,
+    timestamp: &str,
+    evidence: &str,
+    number: u64,
+) -> Option<Event> {
+    let application = match source {
+        "packages-xbps" => line.split_whitespace().nth(1)?,
+        "packages-pacman" | "apps-snap" => line.split_whitespace().next()?,
+        _ => line.split('\t').next()?.trim(),
+    };
+    if application.is_empty() || (source == "apps-snap" && application == "Name") {
+        return None;
+    }
+    Some(Event {
+        timestamp: Some(timestamp.into()),
+        source: source.into(),
+        kind: "application-inventory".into(),
+        application: Some(application.into()),
+        user: None,
+        destination: None,
+        detail: format!(
+            "Current package-manager record; collection time, not install time. Version, architecture, package state and other retained fields: {line}. Installation does not prove execution or network traffic; XBPS labels retain the full package-version identifier."
+        ),
+        evidence: evidence.into(),
+        level: EvidenceLevel::Observed,
+        transfer: None,
+        evidence_line: Some(number),
+    })
+}
 
 pub(crate) fn collect(case: &mut Case, progress: &impl Fn(&str)) -> Result<()> {
     let mut attempted = 0;
@@ -295,6 +356,36 @@ fn aws_transfer(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn package_inventory_keeps_manager_identity_without_claiming_network_activity() {
+        for (source, line, name) in [
+            ("packages-dpkg", "curl\t8.0\tamd64\tii ", "curl"),
+            ("packages-rpm", "curl\t8.0-1\tx86_64", "curl"),
+            ("packages-xbps", "ii curl-8.0_1 HTTP client", "curl-8.0_1"),
+            ("packages-pacman", "curl 8.0-1", "curl"),
+            (
+                "apps-flatpak",
+                "org.example.App\t1\tstable\tflathub",
+                "org.example.App",
+            ),
+            (
+                "apps-snap",
+                "chromium 100 1 latest/stable canonical -",
+                "chromium",
+            ),
+        ] {
+            let event =
+                super::inventory_event(source, line, "2026-10-09T00:00:00Z", "raw/packages.txt", 2)
+                    .expect("record");
+            assert_eq!(event.application.as_deref(), Some(name));
+            assert_eq!(event.evidence_line, Some(2));
+            assert!(event.transfer.is_none());
+            assert!(event.detail.contains(line));
+            assert!(event.detail.contains("not install time"));
+        }
+        assert!(super::inventory_event("apps-snap", "Name Version Rev", "", "", 1).is_none());
+        assert!(super::inventory_event("packages-dpkg", "", "", "", 1).is_none());
+    }
     use super::*;
     use std::fs;
 

@@ -21,6 +21,8 @@ pub fn generate(root: &Path) -> Result<()> {
     let (mut count, mut uploads, mut downloads, mut leads, mut completed) =
         (0_u64, 0_u64, 0_u64, 0_u64, 0_u64);
     let mut applications = BTreeMap::<String, u64>::new();
+    let mut inventory = BTreeMap::<String, u64>::new();
+    let mut activity = BTreeMap::<String, u64>::new();
     for line in BufReader::new(File::open(root.join("normalized/events.jsonl"))?).lines() {
         let event: Event = serde_json::from_str(&line?)?;
         if count > 0 {
@@ -28,6 +30,11 @@ pub fn generate(root: &Path) -> Result<()> {
         }
         write!(data, "{}", script_json(&event)?)?;
         count += 1;
+        if event.kind == "application-inventory" {
+            *inventory.entry(event.source.clone()).or_default() += 1;
+        } else if let Some(application) = &event.application {
+            *activity.entry(application.clone()).or_default() += 1;
+        }
         if event.kind == "network-lead" {
             leads += 1;
         }
@@ -92,16 +99,12 @@ pub fn generate(root: &Path) -> Result<()> {
             root.display()
         ),
     )?;
-    let mut graphs =
-        String::from("<section class=\"panel\"><h2>Transfer records by application</h2>");
-    let max = applications.values().copied().max().unwrap_or(1).max(1);
-    for (app, value) in &applications {
-        graphs.push_str(&format!("<label class=\"bar\"><span>{}</span><meter min=\"0\" max=\"{max}\" value=\"{value}\">{value}</meter><b>{value}</b></label>", escape(app)));
-    }
-    if applications.is_empty() {
-        graphs.push_str("<p>No structured transfer records were retained. Review Coverage and import application logs.</p>");
-    }
-    graphs.push_str("</section>");
+    let graphs = bar_graph("Transfer records by application", &applications);
+    let application_graphs = format!(
+        "{}{}",
+        bar_graph("Package records by manager", &inventory),
+        bar_graph("Activity records by application", &activity)
+    );
     for (name, title, note) in [
         (
             "index",
@@ -129,6 +132,11 @@ pub fn generate(root: &Path) -> Result<()> {
             "Connections, listeners, browser visits, network leads and packet summaries. These records alone do not prove an upload.",
         ),
         (
+            "applications",
+            "Applications",
+            "Current package inventory and retained application activity. Package records describe collection-time state, not installation time or proof of traffic. Activity records retain their own source perspective and identity limits.",
+        ),
+        (
             "collection",
             "Source coverage",
             "Unsupported or absent history is not evidence that activity did not occur.",
@@ -144,10 +152,27 @@ pub fn generate(root: &Path) -> Result<()> {
             name,
             title,
             note,
-            if name == "index" { &graphs } else { "" },
+            match name {
+                "index" => &graphs,
+                "applications" => &application_graphs,
+                _ => "",
+            },
         )?;
     }
     Ok(())
+}
+
+fn bar_graph(title: &str, counts: &BTreeMap<String, u64>) -> String {
+    let mut html = format!("<section class=\"panel\"><h2>{}</h2>", escape(title));
+    let max = counts.values().copied().max().unwrap_or(1).max(1);
+    for (name, value) in counts {
+        html.push_str(&format!("<label class=\"bar\"><span>{}</span><meter min=\"0\" max=\"{max}\" value=\"{value}\">{value}</meter><b>{value}</b></label>", escape(name)));
+    }
+    if counts.is_empty() {
+        html.push_str("<p>No records in this category. Review Coverage for missing or unsupported sources.</p>");
+    }
+    html.push_str("</section>");
+    html
 }
 
 pub fn write_checksums(root: &Path) -> Result<()> {
@@ -200,6 +225,7 @@ fn page(root: &Path, name: &str, title: &str, note: &str, content: &str) -> Resu
         ("timeline", "Timeline"),
         ("downloads", "Downloads"),
         ("network", "Network"),
+        ("applications", "Applications"),
         ("collection", "Coverage"),
         ("evidence", "Evidence"),
     ];
