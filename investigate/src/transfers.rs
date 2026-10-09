@@ -1,6 +1,14 @@
 use crate::case::{Event, EvidenceLevel, Transfer};
 use serde_json::Value;
 
+pub(crate) fn leading_timestamp(line: &str) -> Option<String> {
+    let stamp = line.split_whitespace().next()?.trim_matches(['[', ']']);
+    stamp
+        .parse::<jiff::Timestamp>()
+        .ok()
+        .map(|time| time.to_string())
+}
+
 pub(crate) fn sftp_events(
     line: &str,
     logger: Option<&str>,
@@ -44,7 +52,7 @@ pub(crate) fn sftp_events(
             continue;
         }
         events.push(Event {
-            timestamp: None, source: source.into(), kind: format!("{direction}-transfer"),
+            timestamp: leading_timestamp(line), source: source.into(), kind: format!("{direction}-transfer"),
             application: Some("OpenSSH SFTP server".into()), user: None, destination: Some(file.into()),
             detail: line.into(), evidence: raw.into(), level: EvidenceLevel::Recorded,
             transfer: Some(Transfer {
@@ -56,7 +64,7 @@ pub(crate) fn sftp_events(
     }
     if events.is_empty() {
         events.push(Event {
-            timestamp: None,
+            timestamp: leading_timestamp(line),
             source: source.into(),
             kind: "file-close".into(),
             application: Some("OpenSSH SFTP server".into()),
@@ -83,7 +91,7 @@ pub struct Parser {
 impl Parser {
     pub fn parse(&mut self, line: &str, source: &str, raw: &str) -> Option<Event> {
         let mut event = Event {
-            timestamp: None,
+            timestamp: leading_timestamp(line),
             source: source.into(),
             kind: "transfer".into(),
             application: None,
@@ -557,6 +565,27 @@ pub fn har_events(record: &Value, raw: &str) -> Option<Vec<Event>> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn leading_times_require_a_full_date_and_explicit_offset() {
+        for line in [
+            "2026-10-09T12:00:00+05:30 host app[1]: upload",
+            "[2026-10-09T06:30:00Z] upload",
+        ] {
+            assert_eq!(
+                super::leading_timestamp(line).as_deref(),
+                Some("2026-10-09T06:30:00Z")
+            );
+        }
+        for line in [
+            "Oct 9 12:00:00 host upload",
+            "2026-10-09T12:00:00 host upload",
+            "upload completed at 2026-10-09T06:30:00Z",
+            "2026-02-30T06:30:00Z upload",
+        ] {
+            assert!(super::leading_timestamp(line).is_none(), "{line}");
+        }
+    }
+
     use super::{Parser, har_events};
     use serde_json::json;
 

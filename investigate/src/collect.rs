@@ -646,7 +646,7 @@ pub(crate) fn normalize_text_log(
         .iter()
         .any(|word| lower.contains(word));
         case.event(&Event {
-            timestamp: None,
+            timestamp: crate::transfers::leading_timestamp(&line),
             source: source.into(),
             kind: if network {
                 "network-lead"
