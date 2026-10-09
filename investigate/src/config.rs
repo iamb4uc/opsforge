@@ -107,6 +107,133 @@ pub struct RunConfig {
     pub live_capture: bool,
     pub capture_duration: CaptureDuration,
     pub imports: Vec<PathBuf>,
+    pub checks: Vec<CheckConfig>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+pub enum LinuxCheck {
+    Triage,
+    Persistence,
+    DeletedBinaries,
+    ProcessTree,
+    Suid,
+    PrivilegeSurface,
+    Ssh,
+    ConfigDrift,
+    NetworkPath,
+    DiskPressure,
+    Tls,
+    Firewall,
+    LogSilence,
+    Timeline,
+    WebTriage,
+}
+
+impl LinuxCheck {
+    pub const ALL: [Self; 15] = [
+        Self::Triage,
+        Self::Persistence,
+        Self::DeletedBinaries,
+        Self::ProcessTree,
+        Self::Suid,
+        Self::PrivilegeSurface,
+        Self::Ssh,
+        Self::ConfigDrift,
+        Self::NetworkPath,
+        Self::DiskPressure,
+        Self::Tls,
+        Self::Firewall,
+        Self::LogSilence,
+        Self::Timeline,
+        Self::WebTriage,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Triage => "triage",
+            Self::Persistence => "persistence",
+            Self::DeletedBinaries => "deleted-binaries",
+            Self::ProcessTree => "process-tree",
+            Self::Suid => "suid",
+            Self::PrivilegeSurface => "privilege-surface",
+            Self::Ssh => "ssh",
+            Self::ConfigDrift => "config-drift",
+            Self::NetworkPath => "network-path",
+            Self::DiskPressure => "disk-pressure",
+            Self::Tls => "tls",
+            Self::Firewall => "firewall",
+            Self::LogSilence => "log-silence",
+            Self::Timeline => "timeline",
+            Self::WebTriage => "web-triage",
+        }
+    }
+
+    pub fn input_label(self) -> Option<&'static str> {
+        match self {
+            Self::Tls | Self::NetworkPath => Some("targets file"),
+            Self::LogSilence => Some("log source config"),
+            _ => None,
+        }
+    }
+
+    pub fn needs_baseline(self) -> bool {
+        matches!(self, Self::Suid | Self::ConfigDrift)
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CheckConfig {
+    pub tool: LinuxCheck,
+    #[serde(default)]
+    pub input: Option<PathBuf>,
+    #[serde(default)]
+    pub baseline: Option<PathBuf>,
+    #[serde(default)]
+    pub create_baseline: bool,
+}
+
+impl CheckConfig {
+    pub fn new(tool: LinuxCheck) -> Self {
+        Self {
+            tool,
+            input: None,
+            baseline: None,
+            create_baseline: false,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self
+            .input
+            .as_ref()
+            .is_some_and(|path| path.as_os_str().is_empty())
+            || self
+                .baseline
+                .as_ref()
+                .is_some_and(|path| path.as_os_str().is_empty())
+        {
+            return Err("check input and baseline paths must not be empty");
+        }
+        if self.tool.input_label().is_some() != self.input.is_some() {
+            return Err(
+                "TLS/network checks require explicit targets; log silence requires a config; other checks do not accept input",
+            );
+        }
+        if self.tool.needs_baseline() {
+            if self.create_baseline == self.baseline.is_some() {
+                return Err(
+                    "SUID/config drift requires an existing baseline or selected baseline creation",
+                );
+            }
+        } else if self.create_baseline
+            || (self.baseline.is_some() && self.tool != LinuxCheck::NetworkPath)
+        {
+            return Err("this check does not accept baseline settings");
+        }
+        Ok(())
+    }
 }
 
 impl Default for RunConfig {
@@ -122,6 +249,15 @@ impl RunConfig {
         }
         if self.imports.iter().any(|path| path.as_os_str().is_empty()) {
             return Err("import paths must not be empty");
+        }
+        for (index, check) in self.checks.iter().enumerate() {
+            check.validate()?;
+            if self.checks[..index]
+                .iter()
+                .any(|earlier| earlier.tool == check.tool)
+            {
+                return Err("select each Linux check only once");
+            }
         }
         if Instant::now()
             .checked_add(Duration::from_secs(self.capture_duration.seconds))
@@ -146,14 +282,40 @@ impl RunConfig {
                 label: "5m".to_owned(),
             },
             imports: Vec::new(),
+            checks: Vec::new(),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{CaptureDuration, RunConfig};
+    use super::{CaptureDuration, CheckConfig, LinuxCheck, RunConfig};
     use std::time::Duration;
+
+    #[test]
+    fn checks_require_explicit_targets_and_baseline_actions() {
+        let mut config = RunConfig::default();
+        assert!(config.checks.is_empty());
+        config.checks.push(CheckConfig::new(LinuxCheck::Tls));
+        assert!(config.validate().is_err());
+        config.checks[0].input = Some("targets.conf".into());
+        assert!(config.validate().is_ok());
+        config.checks.push(CheckConfig::new(LinuxCheck::Suid));
+        assert!(config.validate().is_err());
+        config.checks[1].create_baseline = true;
+        assert!(config.validate().is_ok());
+        config.checks[1].baseline = Some("existing.tsv".into());
+        assert!(config.validate().is_err());
+        config.checks[1].create_baseline = false;
+        assert!(config.validate().is_ok());
+        config.checks.push(config.checks[1].clone());
+        assert!(config.validate().is_err());
+        assert!(serde_json::from_str::<CheckConfig>(r#"{"tool":"arbitrary-script"}"#).is_err());
+        assert!(
+            serde_json::from_str::<CheckConfig>(r#"{"tool":"triage","args":["--execute"]}"#)
+                .is_err()
+        );
+    }
 
     #[test]
     fn parses_requested_capture_units() {

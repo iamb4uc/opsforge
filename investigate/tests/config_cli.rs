@@ -23,6 +23,12 @@ fn dry_run_validates_config_and_overrides_without_creating_a_case() {
             "--no-capture",
             "--import",
             "/another/log",
+            "--check",
+            "ssh",
+            "--check",
+            "firewall",
+            "--check",
+            "ssh",
         ])
         .output()
         .expect("dry run");
@@ -36,7 +42,16 @@ fn dry_run_validates_config_and_overrides_without_creating_a_case() {
     assert_eq!(selected["exfil"], false);
     assert_eq!(selected["live_capture"], false);
     assert_eq!(selected["imports"].as_array().expect("imports").len(), 2);
+    assert_eq!(selected["checks"].as_array().expect("checks").len(), 2);
+    assert_eq!(selected["checks"][0]["tool"], "ssh");
+    assert_eq!(selected["checks"][1]["tool"], "firewall");
     assert!(!cases.exists());
+    let missing_targets = Command::new(env!("CARGO_BIN_EXE_opsforge-investigate"))
+        .args(["--dry-run", "--check", "tls"])
+        .output()
+        .expect("missing target configuration");
+    assert!(!missing_targets.status.success());
+    assert!(String::from_utf8_lossy(&missing_targets.stderr).contains("require explicit targets"));
     fs::write(
         &config,
         r#"{"capture_duration":{"seconds":0,"label":"5m"}}"#,

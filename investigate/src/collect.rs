@@ -179,6 +179,7 @@ fn run_case(case: &mut Case, config: &RunConfig, progress: &impl Fn(&str)) -> Re
             import_path(case, path, &format!("import-{index:03}"), progress)
         })?;
     }
+    crate::checks::collect(case, &config.checks, progress)?;
     if config.deep_inventory {
         progress("Inventorying local files");
         source(case, "file-inventory", |case| {

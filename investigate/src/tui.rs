@@ -1,4 +1,4 @@
-use crate::config::RunConfig;
+use crate::config::{CheckConfig, LinuxCheck, RunConfig};
 use anyhow::{Context, Result};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::{
@@ -10,7 +10,7 @@ use ratatui::{
 };
 use std::{cell::RefCell, io::IsTerminal, path::PathBuf};
 
-const ROWS: usize = 9;
+const ROWS: usize = 10;
 
 struct TerminalGuard;
 
@@ -84,7 +84,11 @@ pub fn configure(mut config: RunConfig) -> Result<Option<RunConfig>> {
                 5 => config.live_capture = !config.live_capture,
                 6 => input = Some((6, config.capture_duration.to_string())),
                 7 => input = Some((7, String::new())),
-                8 => return Ok(Some(config)),
+                8 => configure_checks(&mut terminal, &mut config)?,
+                9 => match config.validate() {
+                    Ok(()) => return Ok(Some(config)),
+                    Err(message) => error = message.to_owned(),
+                },
                 _ => {}
             },
             _ => {}
@@ -135,6 +139,10 @@ fn draw(
             "Additional logs        {} path(s) selected",
             config.imports.len()
         ),
+        format!(
+            "Linux checks           {} selected (Enter to configure)",
+            config.checks.len()
+        ),
         "Review and start collection".to_owned(),
     ];
     let items = rows.into_iter().map(ListItem::new).collect::<Vec<_>>();
@@ -166,6 +174,173 @@ fn draw(
         Paragraph::new(footer).block(Block::default().borders(Borders::TOP)),
         sections[2],
     );
+}
+
+fn configure_checks(terminal: &mut ratatui::DefaultTerminal, config: &mut RunConfig) -> Result<()> {
+    let mut selected = 0;
+    loop {
+        terminal.draw(|frame| {
+            let mut rows = LinuxCheck::ALL
+                .into_iter()
+                .map(|tool| {
+                    let request = config.checks.iter().find(|check| check.tool == tool);
+                    let detail = request.map_or("", |check| {
+                        if check.validate().is_err() {
+                            " (settings required)"
+                        } else {
+                            ""
+                        }
+                    });
+                    ListItem::new(format!(
+                        "{} {}{detail}",
+                        mark(request.is_some()),
+                        tool.name()
+                    ))
+                })
+                .collect::<Vec<_>>();
+            rows.push(ListItem::new("Done / return to case setup"));
+            let mut state = ListState::default();
+            state.select(Some(selected));
+            frame.render_stateful_widget(
+                List::new(rows)
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title(" Linux checks / Space select / Enter settings / Esc return "),
+                    )
+                    .highlight_style(Style::default().fg(Color::Cyan))
+                    .highlight_symbol("› "),
+                frame.area(),
+                &mut state,
+            );
+        })?;
+        let Event::Key(key) = event::read()? else {
+            continue;
+        };
+        if key.kind != KeyEventKind::Press {
+            continue;
+        }
+        match key.code {
+            KeyCode::Up => selected = selected.saturating_sub(1),
+            KeyCode::Down => selected = (selected + 1).min(LinuxCheck::ALL.len()),
+            KeyCode::Esc => return Ok(()),
+            KeyCode::Enter if selected == LinuxCheck::ALL.len() => return Ok(()),
+            KeyCode::Char(' ') | KeyCode::Enter if selected < LinuxCheck::ALL.len() => {
+                let tool = LinuxCheck::ALL[selected];
+                let existing = config.checks.iter().position(|check| check.tool == tool);
+                if key.code == KeyCode::Char(' ') {
+                    if let Some(index) = existing {
+                        config.checks.remove(index);
+                    } else {
+                        config.checks.push(CheckConfig::new(tool));
+                    }
+                } else {
+                    let request = existing.map_or_else(
+                        || CheckConfig::new(tool),
+                        |index| config.checks[index].clone(),
+                    );
+                    if let Some(request) = configure_check(terminal, request)? {
+                        if let Some(index) = existing {
+                            config.checks[index] = request;
+                        } else {
+                            config.checks.push(request);
+                        }
+                    }
+                }
+            }
+            _ => (),
+        }
+    }
+}
+
+fn configure_check(
+    terminal: &mut ratatui::DefaultTerminal,
+    mut config: CheckConfig,
+) -> Result<Option<CheckConfig>> {
+    let mut selected = 0;
+    let mut editing: Option<String> = None;
+    let mut error = String::new();
+    loop {
+        terminal.draw(|frame| {
+            let area = Layout::default().constraints([Constraint::Min(6), Constraint::Length(4)]).split(frame.area());
+            let rows = [
+                format!("{}: {}", config.tool.input_label().unwrap_or("Input (not used)"), config.input.as_ref().map_or(String::new(), |path|path.display().to_string())),
+                format!("Existing baseline: {}", config.baseline.as_ref().map_or(String::new(), |path|path.display().to_string())),
+                format!("{} Create new baseline inside this case", mark(config.create_baseline)),
+                "Save and select check".into(),
+            ];
+            let mut state = ListState::default(); state.select(Some(selected));
+            frame.render_stateful_widget(List::new(rows).block(Block::default().borders(Borders::ALL).title(config.tool.name())).highlight_style(Style::default().fg(Color::Cyan)).highlight_symbol("› "),area[0],&mut state);
+            let text = editing.as_ref().map_or_else(|| "Enter edit/save; Esc cancel. TLS/network targets cause active probes. Baselines are created only inside this case.".into(), |buffer|format!("Edit: {buffer}\nEnter confirms; empty clears the path."));
+            frame.render_widget(Paragraph::new(format!("{text}\n{error}")),area[1]);
+        })?;
+        let Event::Key(key) = event::read()? else {
+            continue;
+        };
+        if key.kind != KeyEventKind::Press {
+            continue;
+        }
+        if let Some(buffer) = &mut editing {
+            match key.code {
+                KeyCode::Esc => editing = None,
+                KeyCode::Backspace => {
+                    buffer.pop();
+                }
+                KeyCode::Char(character) if !character.is_control() => buffer.push(character),
+                KeyCode::Enter => {
+                    let path = if buffer.trim().is_empty() {
+                        None
+                    } else {
+                        Some(PathBuf::from(buffer.trim()))
+                    };
+                    if selected == 0 {
+                        config.input = path;
+                    } else {
+                        config.baseline = path;
+                        config.create_baseline = false;
+                    }
+                    editing = None;
+                }
+                _ => (),
+            }
+            continue;
+        }
+        match key.code {
+            KeyCode::Esc => return Ok(None),
+            KeyCode::Up => selected = selected.saturating_sub(1),
+            KeyCode::Down => selected = (selected + 1).min(3),
+            KeyCode::Enter | KeyCode::Char(' ') => match selected {
+                0 if config.tool.input_label().is_some() => {
+                    editing = Some(
+                        config
+                            .input
+                            .as_ref()
+                            .map_or(String::new(), |path| path.display().to_string()),
+                    )
+                }
+                1 if config.tool.needs_baseline() || config.tool == LinuxCheck::NetworkPath => {
+                    editing = Some(
+                        config
+                            .baseline
+                            .as_ref()
+                            .map_or(String::new(), |path| path.display().to_string()),
+                    )
+                }
+                2 if config.tool.needs_baseline() => {
+                    config.create_baseline = !config.create_baseline;
+                    if config.create_baseline {
+                        config.baseline = None;
+                    }
+                }
+                3 => match config.validate() {
+                    Ok(()) => return Ok(Some(config)),
+                    Err(message) => error = message.to_owned(),
+                },
+                _ => error = "this setting does not apply to the selected check".into(),
+            },
+            _ => (),
+        }
+    }
 }
 
 fn mark(enabled: bool) -> &'static str {
