@@ -19,6 +19,33 @@ with flags for a repeatable run. A root session skips `sudo`; otherwise the
 runner validates cached `sudo` access or prompts once before case creation.
 It stops if elevation fails.
 
+## Repeatable configuration
+
+Use `--config FILE` to load a JSON configuration. Omitted fields use the normal
+defaults; unknown keys are rejected to catch spelling mistakes. Saved case
+`config.json` files remain accepted. A capture duration can also be written as
+`"5m"`; legacy `{ "seconds": 300, "label": "5m" }` values must agree.
+
+```json
+{
+  "output_base": "/var/lib/opsforge/cases",
+  "capture_duration": "5m",
+  "deep_inventory": false,
+  "imports": ["/mnt/evidence/proxy.log"]
+}
+```
+
+```bash
+opsforge-investigate --config case-config.json --dry-run
+opsforge-investigate --config case-config.json --non-interactive
+```
+
+`--dry-run` prints validated settings without starting the TUI, requesting sudo,
+or creating a case. `--output` and `--duration` override file settings. Repeated
+`--import` paths are appended. The existing `--no-*` flags deselect sources.
+Path ownership, source availability and capture tool checks still happen during
+the actual run; dry run validates configuration only.
+
 ## Case files
 
 Cases are created at `/var/lib/opsforge/cases/HOST-investigate-YYYYMMDD-HHMMSS/`

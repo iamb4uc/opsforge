@@ -13,16 +13,23 @@ use std::{
 #[derive(Parser)]
 #[command(about = "Collect a Linux investigation case with an offline dashboard")]
 struct Args {
+    #[arg(
+        long,
+        conflicts_with = "config_stdin",
+        help = "Load a JSON case configuration"
+    )]
+    config: Option<PathBuf>,
+    #[arg(long, help = "Print validated settings without sudo or collection")]
+    dry_run: bool,
     #[arg(long, help = "Run without the setup TUI")]
     non_interactive: bool,
     #[arg(short, long, help = "Parent directory for the timestamped case")]
     output: Option<PathBuf>,
     #[arg(
         long,
-        default_value = "5m",
-        help = "Live capture duration: positive s, m, h, or d"
+        help = "Live capture duration: positive s, m, h, or d (default: 5m)"
     )]
-    duration: CaptureDuration,
+    duration: Option<CaptureDuration>,
     #[arg(
         long = "import",
         help = "Additional proxy, firewall, VPN, DNS, or other logs"
@@ -49,25 +56,45 @@ fn main() -> Result<()> {
             bail!("--config-stdin requires root");
         }
         let config: RunConfig = serde_json::from_reader(std::io::stdin())?;
+        config.validate().map_err(anyhow::Error::msg)?;
+        if args.dry_run {
+            println!("{}", serde_json::to_string_pretty(&config)?);
+            return Ok(());
+        }
         return execute(&config, !args.non_interactive);
     }
-    let mut config = RunConfig::default_for(
-        args.output
-            .unwrap_or_else(|| PathBuf::from("/var/lib/opsforge/cases")),
-    );
-    config.capture_duration = args.duration;
-    config.imports = args.imports;
-    config.exfil = !args.no_exfil;
-    config.timeline = !args.no_timeline;
-    config.downloads = !args.no_downloads;
-    config.deep_inventory = !args.no_inventory;
-    config.live_capture = !args.no_capture;
+    let mut config = match args.config {
+        Some(path) => serde_json::from_reader(
+            std::fs::File::open(&path)
+                .with_context(|| format!("opening configuration {}", path.display()))?,
+        )
+        .context("reading case configuration")?,
+        None => RunConfig::default(),
+    };
+    if let Some(output) = args.output {
+        config.output_base = output;
+    }
+    if let Some(duration) = args.duration {
+        config.capture_duration = duration;
+    }
+    config.imports.extend(args.imports);
+    config.exfil &= !args.no_exfil;
+    config.timeline &= !args.no_timeline;
+    config.downloads &= !args.no_downloads;
+    config.deep_inventory &= !args.no_inventory;
+    config.live_capture &= !args.no_capture;
+    config.validate().map_err(anyhow::Error::msg)?;
+    if args.dry_run {
+        println!("{}", serde_json::to_string_pretty(&config)?);
+        return Ok(());
+    }
     if !args.non_interactive {
         let Some(selected) = tui::configure(config)? else {
             return Ok(());
         };
         config = selected;
     }
+    config.validate().map_err(anyhow::Error::msg)?;
     if is_root()? {
         return execute(&config, !args.non_interactive);
     }
