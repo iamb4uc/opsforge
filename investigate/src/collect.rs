@@ -358,34 +358,6 @@ fn sftp_journal_logger(record: &Value) -> Option<&str> {
     }
 }
 
-#[cfg(test)]
-mod journal_tests {
-    use super::sftp_journal_logger;
-    use serde_json::json;
-
-    #[test]
-    fn syslog_label_alone_does_not_attribute_a_journal_record_to_sftp() {
-        assert_eq!(
-            sftp_journal_logger(&json!({"_COMM":"logger","SYSLOG_IDENTIFIER":"sftp-server"})),
-            None
-        );
-        assert_eq!(
-            sftp_journal_logger(&json!({"_COMM":"sftp-server"})),
-            Some("sftp-server")
-        );
-        assert_eq!(
-            sftp_journal_logger(
-                &json!({"_COMM":"sshd-session","SYSLOG_IDENTIFIER":"internal-sftp"})
-            ),
-            Some("internal-sftp")
-        );
-        assert_eq!(
-            sftp_journal_logger(&json!({"_COMM":"sshd","SYSLOG_IDENTIFIER":"sshd"})),
-            None
-        );
-    }
-}
-
 fn collect_logs(case: &mut Case, progress: &impl Fn(&str)) -> Result<()> {
     let mut count = 0_u64;
     let mut attempted = 0_u64;
@@ -832,4 +804,32 @@ fn normalize_pcap(case: &mut Case, pcap: &Path) -> Result<()> {
         detail: format!("{count} packet summaries; {status}"),
     })?;
     Ok(())
+}
+
+#[cfg(test)]
+mod journal_tests {
+    use super::sftp_journal_logger;
+    use serde_json::json;
+
+    #[test]
+    fn syslog_label_alone_does_not_attribute_a_journal_record_to_sftp() {
+        assert_eq!(
+            sftp_journal_logger(&json!({"_COMM":"logger","SYSLOG_IDENTIFIER":"sftp-server"})),
+            None
+        );
+        assert_eq!(
+            sftp_journal_logger(&json!({"_COMM":"sftp-server"})),
+            Some("sftp-server")
+        );
+        assert_eq!(
+            sftp_journal_logger(
+                &json!({"_COMM":"sshd-session","SYSLOG_IDENTIFIER":"internal-sftp"})
+            ),
+            Some("internal-sftp")
+        );
+        assert_eq!(
+            sftp_journal_logger(&json!({"_COMM":"sshd","SYSLOG_IDENTIFIER":"sshd"})),
+            None
+        );
+    }
 }
