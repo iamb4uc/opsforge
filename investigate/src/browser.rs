@@ -16,6 +16,7 @@ pub fn collect(case: &mut Case, progress: &impl Fn(&str)) -> Result<()> {
             continue;
         }
         for entry in WalkDir::new(&home).follow_links(false).max_depth(8) {
+            crate::runtime::check_cancelled()?;
             let entry = match entry {
                 Ok(entry) => entry,
                 Err(error) => {
@@ -147,6 +148,7 @@ fn parse_history(
     let mut rows = statement.query([])?;
     let mut count = 0_u64;
     while let Some(row) = rows.next()? {
+        crate::runtime::check_cancelled()?;
         let time: i64 = row.get(0)?;
         let url: String = row.get(1)?;
         let title: String = row.get(2)?;
@@ -209,6 +211,7 @@ fn parse_history(
         let mut rows = downloads.query([])?;
         let mut download_count = 0_u64;
         while let Some(row) = rows.next()? {
+            crate::runtime::check_cancelled()?;
             let time: i64 = row.get(0)?;
             let path: String = row.get(1)?;
             let received: i64 = row.get(2)?;
@@ -281,6 +284,7 @@ fn firefox_downloads(case: &mut Case, db: &Connection, user: &str, raw: &str) ->
     let mut count = 0_u64;
     let mut failed = 0_u64;
     while let Some(row) = rows.next()? {
+        crate::runtime::check_cancelled()?;
         let parsed = (|| -> rusqlite::Result<_> {
             Ok((
                 row.get::<_, i64>(0)?,

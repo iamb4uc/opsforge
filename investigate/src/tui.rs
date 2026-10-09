@@ -1,6 +1,6 @@
 use crate::config::RunConfig;
 use anyhow::{Context, Result};
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout},
@@ -176,7 +176,27 @@ pub fn run_progress(config: &RunConfig) -> Result<PathBuf> {
     let terminal = RefCell::new(ratatui::init());
     let _guard = TerminalGuard;
     let updates = RefCell::new(Vec::<String>::new());
-    crate::collect::run(config, &|message| {
+    let finished = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let input_finished = std::sync::Arc::clone(&finished);
+    let input = std::thread::spawn(move || {
+        while !input_finished.load(std::sync::atomic::Ordering::Relaxed) {
+            match event::poll(std::time::Duration::from_millis(50)) {
+                Ok(true) => match event::read() {
+                    Ok(Event::Key(key))
+                        if matches!(key.code, KeyCode::Char('c' | 'C'))
+                            && key.modifiers.contains(KeyModifiers::CONTROL) =>
+                    {
+                        crate::runtime::cancel()
+                    }
+                    Err(_) => break,
+                    _ => (),
+                },
+                Ok(false) => (),
+                Err(_) => break,
+            }
+        }
+    });
+    let result = crate::collect::run(config, &|message| {
         let mut lines = updates.borrow_mut();
         lines.push(message.to_owned());
         if lines.len() > 16 {
@@ -186,7 +206,7 @@ pub fn run_progress(config: &RunConfig) -> Result<PathBuf> {
             let area = frame.area();
             let block = Block::default()
                 .borders(Borders::ALL)
-                .title(" OPSFORGE / COLLECTING ");
+                .title(" OPSFORGE / COLLECTING · Ctrl-C cancel ");
             frame.render_widget(block, area);
             let inner = area.inner(ratatui::layout::Margin {
                 horizontal: 2,
@@ -194,7 +214,10 @@ pub fn run_progress(config: &RunConfig) -> Result<PathBuf> {
             });
             frame.render_widget(Paragraph::new(lines.join("\n")), inner);
         });
-    })
+    });
+    finished.store(true, std::sync::atomic::Ordering::Relaxed);
+    let _ = input.join();
+    result
 }
 
 #[cfg(test)]

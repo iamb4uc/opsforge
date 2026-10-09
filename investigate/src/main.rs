@@ -138,6 +138,7 @@ fn main() -> Result<()> {
 }
 
 fn execute(config: &RunConfig, interactive: bool) -> Result<()> {
+    collect::install_signal_handlers()?;
     let root = if interactive {
         tui::run_progress(config)?
     } else {

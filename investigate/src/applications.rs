@@ -147,6 +147,7 @@ fn collect_home(
         let mut count = 0;
         let mut failed = 0;
         for entry in WalkDir::new(&location).follow_links(false).max_depth(8) {
+            crate::runtime::check_cancelled()?;
             let entry = match entry {
                 Ok(entry) => entry,
                 Err(error) => {
@@ -235,6 +236,7 @@ fn aws_history(case: &mut Case, path: &Path, name: &str, user: &str) -> Result<u
     let mut count = 0;
     let mut failed = 0;
     while let Some(row) = rows.next()? {
+        crate::runtime::check_cancelled()?;
         let parsed = (|| -> rusqlite::Result<_> {
             Ok((
                 row.get::<_, String>(0)?,
@@ -295,6 +297,7 @@ fn aws_transfer(
     let mut operation = None;
     let mut targets = BTreeSet::new();
     while let Some(row) = rows.next()? {
+        crate::runtime::check_cancelled()?;
         let kind: String = row.get(0)?;
         let payload: String = row.get(1)?;
         let Ok(value) = serde_json::from_str::<serde_json::Value>(&payload) else {
