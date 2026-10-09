@@ -10,6 +10,89 @@ pub(crate) fn leading_timestamp(line: &str) -> Option<String> {
         .map(|time| time.to_string())
 }
 
+fn nextcloud_event(line: &str, source: &str, raw: &str) -> Option<Event> {
+    let (stamp, rest) = line.split_once(" [ ")?;
+    let (context, message) = rest.split_once(" ]:\t")?;
+    if context.split_whitespace().nth(1)? != "nextcloud.sync.propagator" {
+        return None;
+    }
+    let (date, time) = stamp.split_once(' ')?;
+    let (clock, millis) = time.rsplit_once(':')?;
+    if millis.len() != 3 || !millis.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let time = format!("{clock}.{millis}");
+    time.parse::<jiff::civil::Time>().ok()?;
+    let timestamp = if date.len() == 10 {
+        date.parse::<jiff::civil::Date>().ok()?;
+        Some(format!("{date}T{time}"))
+    } else if date.len() == 5 {
+        format!("2000-{date}").parse::<jiff::civil::Date>().ok()?;
+        None
+    } else {
+        return None;
+    };
+    let (failed, message) = if let Some(message) = message.strip_prefix("Completed propagation of ")
+    {
+        (false, message)
+    } else if let Some(message) = message.strip_prefix("Could not complete propagation of ") {
+        (true, message)
+    } else {
+        return None;
+    };
+    let mut quoted = serde_json::Deserializer::from_str(message).into_iter::<String>();
+    let file = quoted.next()?.ok()?;
+    if file.is_empty() {
+        return None;
+    }
+    let job = message.get(quoted.byte_offset()..)?.strip_prefix(" by ")?;
+    let (class, rest) = job.split_once('(')?;
+    let direction = match class {
+        "OCC::PropagateDownloadFile" => "download",
+        "OCC::PropagateUploadFileV1" | "OCC::PropagateUploadFileV2" | "OCC::BulkPropagatorJob" => {
+            "upload"
+        }
+        _ => return None,
+    };
+    let (pointer, result) = rest.split_once(") with status OCC::SyncFileItem::")?;
+    let pointer = pointer.strip_prefix("0x")?;
+    if pointer.is_empty() || !pointer.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    let status = result
+        .split_once(" and error:")
+        .map_or(result, |(status, _)| status);
+    let outcome = if !failed && status == "Success" {
+        "completed"
+    } else if failed
+        && matches!(
+            status,
+            "FatalError"
+                | "NormalError"
+                | "SoftError"
+                | "DetailError"
+                | "BlacklistedError"
+                | "FileLocked"
+                | "FileNameInvalid"
+                | "FileNameInvalidOnServer"
+                | "FileNameClash"
+        )
+    {
+        "failed"
+    } else {
+        return None;
+    };
+    Some(Event {
+        timestamp, source: source.into(), kind: format!("{direction}-transfer"), application: Some("Nextcloud".into()),
+        user: None, destination: Some(file.clone()),
+        detail: format!("{line}\nClient-reported file sync operation via {class}; not independent confirmation of payload transfer. Virtual-file/metadata behavior may not retain full content. Peer, account, opposite-side path and actual transferred bytes are unknown. Source time has no retained timezone; month/day-only logs also lack a year."),
+        evidence: raw.into(), level: EvidenceLevel::Recorded,
+        transfer: Some(Transfer { direction: direction.into(), status: outcome.into(), protocol: "WebDAV".into(), perspective: "client".into(),
+            file: Some(file), target: None, peer: None, bytes: None, bytes_basis: "not retained in this per-file sync result; no size inferred from journal metadata or job totals".into(), method: Some(class.into()) }),
+        evidence_line: None,
+    })
+}
+
 pub(crate) fn rsync_event(
     line: &str,
     logger: Option<&str>,
@@ -314,6 +397,9 @@ impl Parser {
     }
 
     pub fn parse(&mut self, line: &str, source: &str, raw: &str) -> Option<Event> {
+        if let Some(event) = nextcloud_event(line, source, raw) {
+            return Some(event);
+        }
         if let Some(event) = self.filezilla_event(line, source, raw) {
             return Some(event);
         }
@@ -880,6 +966,45 @@ pub fn har_events(record: &Value, raw: &str) -> Option<Vec<Event>> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn nextcloud_sync_results_require_a_file_job_and_keep_missing_year_unknown() {
+        for (class, direction) in [
+            ("PropagateDownloadFile", "download"),
+            ("PropagateUploadFileV1", "upload"),
+            ("PropagateUploadFileV2", "upload"),
+            ("BulkPropagatorJob", "upload"),
+        ] {
+            let line = format!(
+                "10-09 18:24:09:900 [ info nextcloud.sync.propagator ]:\tCompleted propagation of \"file with spaces.txt\" by OCC::{class}(0xabc123) with status OCC::SyncFileItem::Success"
+            );
+            let event = super::nextcloud_event(&line, "import", "raw/log").expect("file job");
+            assert!(event.timestamp.is_none());
+            let transfer = event.transfer.expect("transfer");
+            assert_eq!(transfer.direction, direction);
+            assert_eq!(transfer.status, "completed");
+            assert_eq!(transfer.file.as_deref(), Some("file with spaces.txt"));
+            assert!(
+                transfer.bytes.is_none() && transfer.peer.is_none() && transfer.target.is_none()
+            );
+        }
+        let failed = "2026-10-09 18:25:40:595 [ warning nextcloud.sync.propagator ]:\tCould not complete propagation of \"denied-upload.txt\" by OCC::BulkPropagatorJob(0xabc) with status OCC::SyncFileItem::NormalError and error: \"Permission denied\"";
+        let event = super::nextcloud_event(failed, "import", "raw/log").expect("failed");
+        assert_eq!(event.timestamp.as_deref(), Some("2026-10-09T18:25:40.595"));
+        assert_eq!(event.transfer.expect("transfer").status, "failed");
+        for line in [
+            "10-09 18:24:09:900 [ info nextcloud.sync.propagator ]:\tCompleted propagation of \"folder\" by OCC::PropagateLocalMkdir(0xabc) with status OCC::SyncFileItem::Success",
+            "10-09 18:24:09:900 [ info unrelated ]:\tCompleted propagation of \"file\" by OCC::PropagateDownloadFile(0xabc) with status OCC::SyncFileItem::Success",
+            "10-09 18:24:09:900 [ info nextcloud.sync.propagator ]:\tCompleted propagation of \"file\" by OCC::PropagateDownloadFile(invalid) with status OCC::SyncFileItem::Success",
+            "02-30 18:24:09:900 [ info nextcloud.sync.propagator ]:\tCompleted propagation of \"file\" by OCC::PropagateDownloadFile(0xabc) with status OCC::SyncFileItem::Success",
+            "10-09 18:24:09:900 [ info nextcloud.sync.propagator ]:\tCompleted propagation of \"file\" by OCC::PropagateDownloadFile(0xabc) with status OCC::SyncFileItem::FileIgnored",
+        ] {
+            assert!(
+                super::nextcloud_event(line, "import", "raw/log").is_none(),
+                "{line}"
+            );
+        }
+    }
+
     #[test]
     fn filezilla_engine_ids_isolate_interleaved_results_and_rounded_bytes() {
         let mut parser = super::Parser::default();

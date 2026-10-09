@@ -172,6 +172,16 @@ Supported retained sources:
   custom paths with `--import`; journal messages need a retained rsync process
   identity. See the [rsync logging format](https://download.samba.org/pub/rsync/rsyncd.conf.5)
   and [itemized update semantics](https://download.samba.org/pub/rsync/rsync.1).
+- Nextcloud client propagation results: recognized download, single-file upload
+  and bulk-upload jobs retain the client-reported outcome and logged relative
+  file path. Directory creation, renames and other metadata jobs are not file
+  transfers. Virtual-file behavior can omit content; the operation result is not
+  independent confirmation of payload transfer. Peer, account, opposite-side
+  path and transferred bytes remain unknown. GUI timestamps lack a timezone;
+  command-line month/day timestamps also lack a year. Custom log paths can be
+  imported. Unknown job classes and formats remain raw records. See the
+  [client logging documentation](https://docs.nextcloud.com/server/latest/admin_manual/desktop/troubleshooting.html)
+  and [propagation result implementation](https://github.com/nextcloud/desktop/blob/f91ae00cfa5113e0991d7c476460c8f55a80990f/src/libsync/owncloudpropagator.cpp#L285).
 - FileZilla English file logs: process/engine IDs match interleaved transfer
   starts to client outcomes. Upload starts name the local file; download starts
   name the remote file. Connection endpoints are kept when logged; protocol,
