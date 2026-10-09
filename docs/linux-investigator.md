@@ -172,6 +172,17 @@ Supported retained sources:
   custom paths with `--import`; journal messages need a retained rsync process
   identity. See the [rsync logging format](https://download.samba.org/pub/rsync/rsyncd.conf.5)
   and [itemized update semantics](https://download.samba.org/pub/rsync/rsync.1).
+- FileZilla English file logs: process/engine IDs match interleaved transfer
+  starts to client outcomes. Upload starts name the local file; download starts
+  name the remote file. Connection endpoints are kept when logged; protocol,
+  authentication identity and opposite-side paths remain unknown. Exact `B`
+  progress counters exclude resume offsets and wire overhead; rounded/localized
+  sizes remain unknown. Reconnection clears pending context; missing starts
+  leave direction/file unknown. Context is limited to 4096 engines per input;
+  exhausted context is discarded rather than matched to unrelated operations.
+  Plain timestamps have no timezone. Other languages/formats remain raw records.
+  Logging must already exist; collection does not enable it. Use `--import` for
+  custom paths or exported logs. See [FileZilla logging configuration](https://filezillapro.com/docs/v3/advanced/log-files/).
 - rclone JSON logs: recorded object name and copy outcome. Direction and remote
   destination require retained command context plus a recognized network backend
   record. Copy/sync/move/copyto/moveto accept recognized global/command flags;
