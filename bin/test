@@ -584,6 +584,17 @@ test_linux_fixtures() {
   "$ROOT/bin/opsforge" linux log-silence --config "$silence_cfg" --output "$run_dir" --quiet
   assert_output_contract "$(latest_output_dir "$run_dir" log-source-silence-detector)"
 
+  printf 'fixture-app|%s|critical|1+1\n' "$log_file" > "$silence_cfg"
+  if "$ROOT/bin/opsforge" linux log-silence --config "$silence_cfg" --output "$run_dir" --quiet > "$run_dir/invalid-log-age.txt" 2>&1; then
+    fail "log silence accepted an arithmetic expression as an age"
+  fi
+  assert_text "$run_dir/invalid-log-age.txt" "Log age must be a non-negative integer"
+  printf 'fixture-app|%s|critical|1440\n' "$log_file" > "$silence_cfg"
+  if "$ROOT/bin/opsforge" linux log-silence --config "$silence_cfg" --max-age invalid --output "$run_dir" --quiet > "$run_dir/invalid-default-log-age.txt" 2>&1; then
+    fail "log silence accepted an invalid default age"
+  fi
+  assert_text "$run_dir/invalid-default-log-age.txt" "Log age must be a non-negative integer"
+
   net_cfg="$run_dir/network-targets.conf"
   cp "$fixture_dir/network-targets.conf" "$net_cfg"
   "$ROOT/bin/opsforge" linux net-drift --targets "$net_cfg" --output "$run_dir" --quiet

@@ -44,6 +44,10 @@ while [ "$#" -gt 0 ]; do
 done
 [ -n "$CONFIG" ] || die "--config is required"
 [ -r "$CONFIG" ] || die "Cannot read config: $CONFIG"
+validate_age() {
+  [[ "$1" =~ ^[0-9]{1,9}$ ]] || die "Log age must be a non-negative integer of at most nine digits: $1"
+}
+validate_age "$MAX_AGE_MINUTES"
 
 HOST="$(opsforge_hostname)"
 OUT_DIR="$(opsforge_make_output_dir "$OUTPUT_BASE" "$SCRIPT_NAME")"
@@ -58,6 +62,8 @@ while IFS='|' read -r name path critical max_age rest; do
   [ -n "${name:-}" ] || continue
   case "$name" in \#*) continue ;; esac
   threshold="${max_age:-$MAX_AGE_MINUTES}"
+  validate_age "$threshold"
+  threshold="$((10#$threshold))"
   severity="high"
   [ "${critical:-}" = "critical" ] && severity="critical"
   if [ ! -e "$path" ]; then
