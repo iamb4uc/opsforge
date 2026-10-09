@@ -1,6 +1,7 @@
 mod applications;
 pub mod browser;
 pub mod case;
+mod checks;
 pub mod collect;
 pub mod config;
 pub mod report;

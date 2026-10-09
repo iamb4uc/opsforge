@@ -2,7 +2,7 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 use opsforge_investigate::{
     collect,
-    config::{CaptureDuration, RunConfig},
+    config::{CaptureDuration, CheckConfig, LinuxCheck, RunConfig},
     tui,
 };
 use std::{
@@ -35,6 +35,11 @@ struct Args {
         help = "Additional proxy, firewall, VPN, DNS, or other logs"
     )]
     imports: Vec<PathBuf>,
+    #[arg(
+        long = "check",
+        help = "Select a Linux check; target/baseline settings come from --config or the TUI"
+    )]
+    checks: Vec<LinuxCheck>,
     #[arg(long)]
     no_exfil: bool,
     #[arg(long)]
@@ -78,12 +83,19 @@ fn main() -> Result<()> {
         config.capture_duration = duration;
     }
     config.imports.extend(args.imports);
+    for tool in args.checks {
+        if !config.checks.iter().any(|check| check.tool == tool) {
+            config.checks.push(CheckConfig::new(tool));
+        }
+    }
     config.exfil &= !args.no_exfil;
     config.timeline &= !args.no_timeline;
     config.downloads &= !args.no_downloads;
     config.deep_inventory &= !args.no_inventory;
     config.live_capture &= !args.no_capture;
-    config.validate().map_err(anyhow::Error::msg)?;
+    if args.dry_run || args.non_interactive {
+        config.validate().map_err(anyhow::Error::msg)?;
+    }
     if args.dry_run {
         println!("{}", serde_json::to_string_pretty(&config)?);
         return Ok(());

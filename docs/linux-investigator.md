@@ -1,5 +1,8 @@
 # Linux investigator
 
+The setup menu can also select [Linux operational checks](investigator-checks.md)
+and their target/baseline settings. Their results appear in the Checks page.
+
 The investigator is a separate Linux x86_64 case runner. The release bootstrap
 downloads a prebuilt binary and checksum, verifies the archive, and starts
 terminal setup. `--install-deps` installs missing capture tools through the
