@@ -90,6 +90,10 @@ or with the timeline checkbox. Raw references show the original source path and
 line number or HAR entry index. Keep the whole case directory when sharing it. The bootstrap
 removes only its temporary files. It does not compress or remove the case.
 
+Text logs retain a leading timestamp when it includes a full date and explicit
+timezone offset; it is normalized to UTC. Yearless syslog dates, local dates
+without an offset, and dates found only inside messages remain unknown.
+
 ## Sources and interpretation
 
 The runner inventories active sockets and installed application lists, saves
