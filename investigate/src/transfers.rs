@@ -3,19 +3,14 @@ use serde_json::Value;
 
 #[derive(Default)]
 pub struct Parser {
-    rclone_paths: Option<(String, String)>,
+    rclone_paths: Option<(String, String, bool)>,
     network_backend: Option<String>,
-    run_active: bool,
+    active_runs: u32,
     ambiguous_runs: bool,
 }
 
 impl Parser {
     pub fn parse(&mut self, line: &str, source: &str, raw: &str) -> Option<Event> {
-        if line.contains(" Failed to create file system for ") {
-            self.run_active = false;
-            self.rclone_paths = None;
-            self.network_backend = None;
-        }
         let mut event = Event {
             timestamp: None,
             source: source.into(),
@@ -30,7 +25,16 @@ impl Parser {
             evidence_line: None,
         };
         if let Ok(record) = serde_json::from_str::<Value>(line) {
-            if record.get("msg").is_some() && record.get("source").is_some() {
+            if record.get("msg").is_some()
+                && (record.get("objectType").is_some()
+                    || record
+                        .get("source")
+                        .and_then(Value::as_str)
+                        .is_some_and(|source| source.starts_with("cmd/")))
+                && ["request_method", "method", "request"]
+                    .iter()
+                    .all(|field| record.get(field).is_none())
+            {
                 return self.rclone(&record, event);
             }
             let method = text(&record, "request_method").or_else(|| text(&record, "method"));
@@ -124,14 +128,17 @@ impl Parser {
     fn rclone(&mut self, record: &Value, mut event: Event) -> Option<Event> {
         let message = text(record, "msg")?;
         let object_type = text(record, "objectType").unwrap_or_default();
-        if message.trim_end().ends_with("go routines active") {
-            self.run_active = false;
+        if message.trim_end().ends_with("go routines active")
+            && text(record, "source").is_some_and(|source| source.starts_with("cmd/"))
+        {
+            self.active_runs = self.active_runs.saturating_sub(1);
             self.rclone_paths = None;
             self.network_backend = None;
+            self.ambiguous_runs = self.active_runs > 0;
         }
         if message.contains("starting with parameters [") {
-            self.ambiguous_runs |= self.run_active;
-            self.run_active = true;
+            self.ambiguous_runs = self.active_runs > 0;
+            self.active_runs = self.active_runs.saturating_add(1);
             self.rclone_paths = None;
             self.network_backend = None;
             let parameters = message
@@ -142,13 +149,8 @@ impl Parser {
                 .into_iter::<String>()
                 .collect::<Result<Vec<_>, _>>()
                 .ok()?;
-            if args.len() >= 4
-                && !self.ambiguous_runs
-                && matches!(args[1].as_str(), "copy" | "sync" | "move")
-                && !args[2].starts_with('-')
-                && !args[3].starts_with('-')
-            {
-                self.rclone_paths = Some((args[2].clone(), args[3].clone()));
+            if !self.ambiguous_runs {
+                self.rclone_paths = rclone_arguments(&args);
             }
         }
         if object_type.ends_with(".Fs")
@@ -175,29 +177,39 @@ impl Parser {
             return None;
         }
         let mut direction = "unknown";
-        let file = Some(object.clone());
-        let mut target = self.network_backend.clone();
-        if let Some((from, to)) = &self.rclone_paths {
+        let mut file = Some(object.clone());
+        let mut target = None;
+        if let Some((from, to, single_file)) = &self.rclone_paths {
             if !from.contains(':')
                 && to.contains(':')
                 && self.network_backend.is_some()
                 && object_type == "*local.Object"
             {
                 direction = "upload";
-                target = Some(format!(
-                    "{}/{object}",
-                    self.network_backend.as_deref()?.trim_end_matches('/')
-                ));
+                target = Some(if *single_file {
+                    file = Some(from.clone());
+                    to.clone()
+                } else {
+                    format!(
+                        "{}/{object}",
+                        self.network_backend.as_deref()?.trim_end_matches('/')
+                    )
+                });
             } else if from.contains(':')
                 && !to.contains(':')
                 && object_type != "*local.Object"
                 && self.network_backend.is_some()
             {
                 direction = "download";
-                target = Some(format!(
-                    "{}/{object}",
-                    self.network_backend.as_deref()?.trim_end_matches('/')
-                ));
+                target = Some(if *single_file {
+                    file = Some(to.clone());
+                    from.clone()
+                } else {
+                    format!(
+                        "{}/{object}",
+                        self.network_backend.as_deref()?.trim_end_matches('/')
+                    )
+                });
             }
         }
         event.timestamp = text(record, "time");
@@ -224,6 +236,80 @@ impl Parser {
         });
         Some(event)
     }
+}
+
+fn rclone_arguments(args: &[String]) -> Option<(String, String, bool)> {
+    let mut positionals = Vec::new();
+    let mut args = args.iter().skip(1);
+    let mut flags = true;
+    while let Some(argument) = args.next() {
+        if flags && argument == "--" {
+            flags = false;
+        } else if flags && argument.starts_with('-') {
+            if argument.starts_with("--") && argument.contains('=') {
+                continue;
+            }
+            match argument.as_str() {
+                "-v"
+                | "-vv"
+                | "-q"
+                | "-P"
+                | "--verbose"
+                | "--quiet"
+                | "--progress"
+                | "--use-json-log"
+                | "--checksum"
+                | "--size-only"
+                | "--ignore-existing"
+                | "--ignore-times"
+                | "--dry-run"
+                | "--fast-list"
+                | "--no-traverse"
+                | "--stats-one-line"
+                | "--stats-one-line-date" => {}
+                "--config"
+                | "--log-file"
+                | "--log-level"
+                | "--log-format"
+                | "--stats"
+                | "--stats-log-level"
+                | "--transfers"
+                | "--checkers"
+                | "--bwlimit"
+                | "--include"
+                | "--exclude"
+                | "--filter"
+                | "--files-from"
+                | "--files-from-raw"
+                | "--min-age"
+                | "--max-age"
+                | "--min-size"
+                | "--max-size"
+                | "--retries"
+                | "--low-level-retries" => {
+                    args.next()?;
+                }
+                // Unknown flag arity must not shift paths into an invented direction.
+                _ => return None,
+            }
+        } else {
+            positionals.push(argument);
+        }
+    }
+    let [command, from, to] = positionals.as_slice() else {
+        return None;
+    };
+    if !matches!(
+        command.as_str(),
+        "copy" | "sync" | "move" | "copyto" | "moveto"
+    ) {
+        return None;
+    }
+    Some((
+        (*from).clone(),
+        (*to).clone(),
+        matches!(command.as_str(), "copyto" | "moveto"),
+    ))
 }
 
 fn text(record: &Value, key: &str) -> Option<String> {
@@ -402,6 +488,191 @@ pub fn har_events(record: &Value, raw: &str) -> Option<Vec<Event>> {
 mod tests {
     use super::{Parser, har_events};
     use serde_json::json;
+
+    fn rclone_line(message: &str, object: &str, object_type: &str) -> String {
+        json!({"msg": message, "object": object, "objectType": object_type,
+            "source": "cmd/cmd.go:1", "time": "2026-10-09T00:00:00Z"})
+        .to_string()
+    }
+
+    #[test]
+    fn json_log_fields_do_not_confuse_http_and_rclone() {
+        let mut parser = Parser::default();
+        let http = json!({"msg": "request complete", "source": "proxy",
+            "request_method": "POST", "request_uri": "/upload", "status": 201,
+            "request_length": 200})
+        .to_string();
+        let event = parser.parse(&http, "log", "raw/log").expect("HTTP record");
+        assert_eq!(event.application.as_deref(), Some("HTTP server"));
+        assert_eq!(event.transfer.expect("transfer").direction, "upload");
+        let copied = json!({"msg": "Copied (new)", "object": "file.txt",
+            "objectType": "*local.Object"})
+        .to_string();
+        let event = parser
+            .parse(&copied, "log", "raw/log")
+            .expect("rclone record without source field");
+        assert_eq!(event.application.as_deref(), Some("rclone"));
+        assert_eq!(event.transfer.expect("transfer").direction, "unknown");
+    }
+
+    fn start_rclone(parser: &mut Parser, args: &[&str]) {
+        let parameters = args
+            .iter()
+            .map(|arg| serde_json::to_string(arg).expect("arg"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        parser.parse(
+            &rclone_line(
+                &format!("Version starting with parameters [{parameters}]"),
+                "rclone",
+                "string",
+            ),
+            "log",
+            "raw/log",
+        );
+        parser.parse(
+            &rclone_line("dial", "ftp://example.test/folder", "*ftp.Fs"),
+            "log",
+            "raw/log",
+        );
+    }
+
+    #[test]
+    fn rclone_flags_and_single_file_commands_keep_actual_target() {
+        for command in ["copyto", "moveto"] {
+            let mut parser = Parser::default();
+            start_rclone(
+                &mut parser,
+                &[
+                    "rclone",
+                    "--config",
+                    "/safe/config",
+                    command,
+                    "--use-json-log",
+                    "/local/original.txt",
+                    "remote:renamed.txt",
+                    "--log-level=DEBUG",
+                ],
+            );
+            let event = parser
+                .parse(
+                    &rclone_line("Copied (new)", "original.txt", "*local.Object"),
+                    "log",
+                    "raw/log",
+                )
+                .expect("record");
+            let transfer = event.transfer.expect("transfer");
+            assert_eq!(transfer.direction, "upload", "{command}");
+            assert_eq!(transfer.target.as_deref(), Some("remote:renamed.txt"));
+        }
+        let mut parser = Parser::default();
+        start_rclone(
+            &mut parser,
+            &[
+                "rclone",
+                "copy",
+                "--log-level",
+                "DEBUG",
+                "--progress",
+                "/local/folder",
+                "remote:folder",
+            ],
+        );
+        let transfer = parser
+            .parse(
+                &rclone_line("Copied (new)", "document.txt", "*local.Object"),
+                "log",
+                "raw/log",
+            )
+            .expect("record")
+            .transfer
+            .expect("transfer");
+        assert_eq!(transfer.direction, "upload");
+        assert_eq!(
+            transfer.target.as_deref(),
+            Some("ftp://example.test/folder/document.txt")
+        );
+    }
+
+    #[test]
+    fn rclone_unknown_flags_and_interleaved_runs_do_not_invent_direction() {
+        let copied = rclone_line("Copied (new)", "document.txt", "*local.Object");
+        let args = ["rclone", "copy", "/local/folder", "remote:folder"];
+        let mut parser = Parser::default();
+        start_rclone(
+            &mut parser,
+            &[
+                "rclone",
+                "--unknown-option",
+                "copy",
+                "/local/folder",
+                "remote:folder",
+            ],
+        );
+        assert_eq!(
+            parser
+                .parse(&copied, "log", "raw/log")
+                .expect("record")
+                .transfer
+                .expect("transfer")
+                .direction,
+            "unknown"
+        );
+        parser.parse(
+            &rclone_line("4 go routines active", "rclone", "string"),
+            "log",
+            "raw/log",
+        );
+        start_rclone(&mut parser, &args);
+        assert_eq!(
+            parser
+                .parse(&copied, "log", "raw/log")
+                .expect("record")
+                .transfer
+                .expect("transfer")
+                .direction,
+            "upload"
+        );
+        start_rclone(&mut parser, &args);
+        assert_eq!(
+            parser
+                .parse(&copied, "log", "raw/log")
+                .expect("record")
+                .transfer
+                .expect("transfer")
+                .direction,
+            "unknown"
+        );
+        parser.parse(
+            &rclone_line("4 go routines active", "rclone", "string"),
+            "log",
+            "raw/log",
+        );
+        assert_eq!(
+            parser
+                .parse(&copied, "log", "raw/log")
+                .expect("record")
+                .transfer
+                .expect("transfer")
+                .direction,
+            "unknown"
+        );
+        parser.parse(
+            &rclone_line("4 go routines active", "rclone", "string"),
+            "log",
+            "raw/log",
+        );
+        start_rclone(&mut parser, &args);
+        assert_eq!(
+            parser
+                .parse(&copied, "log", "raw/log")
+                .expect("record")
+                .transfer
+                .expect("transfer")
+                .direction,
+            "upload"
+        );
+    }
 
     #[test]
     fn rclone_requires_command_and_network_backend_before_assigning_upload_direction() {
