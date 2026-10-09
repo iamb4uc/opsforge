@@ -56,7 +56,7 @@ removes only its temporary files. It does not compress or remove the case.
 
 The runner inventories active sockets and installed application lists, saves
 the retained system journal and `/var/log` files, snapshots Firefox and
-Chromium-family history, reads Chromium download records, copies supplied
+Chromium-family history, reads Chromium and Firefox download records, copies supplied
 logs, and captures live packets on all interfaces. The live timer starts when
 the case starts. Sources are saved and hashed as they are collected.
 
@@ -65,8 +65,8 @@ network leads; their original lines remain in `raw/`. Browser visits are
 leads, and a browser visit does not prove upload. Current sockets are observed
 at one point in time. Historical application attribution depends on retained
 records with application names. Packet summaries do not identify an
-application by themselves. Firefox downloads, upload payloads, and binary or
-compressed imported-log formats are not decoded yet; coverage records these
+application by themselves. Upload payloads and binary or compressed imported-log
+formats are not decoded yet; coverage records these
 limits. No malware verdict or exfiltration conclusion is generated from weak
 signals, so `findings.json` can be empty.
 
@@ -84,9 +84,11 @@ Supported retained sources:
   local timestamps lack a timezone, and spaces in file names become underscores.
 - rclone JSON logs: recorded object name and copy outcome. Direction and remote
   destination require retained command context plus a recognized network backend
-  record. Without them, direction stays unknown. Flags before positional arguments,
-  copyto/moveto, mixed concurrent runs and logs lacking that context are not assigned
-  upload/download direction. Byte counts remain unknown unless logged per object.
+  record. Copy/sync/move/copyto/moveto accept recognized global/command flags;
+  single-file commands retain the explicitly named destination. Without command
+  and backend context, with unknown flag arity, or during interleaved runs,
+  direction stays unknown. A new run can be attributed after all observed runs
+  have logged their terminal markers. Byte counts remain unknown unless logged per object.
   Named remotes alone are not assumed to be network destinations.
 - HTTP combined and JSON access logs: PUT/POST/PATCH upload requests and GET
   download requests, target, time, user/peer when logged and response outcome.
@@ -98,6 +100,11 @@ Supported retained sources:
   A HAR must already exist; ordinary browser history does not retain these fields.
 - Chromium download metadata: local path, source URL when available and received
   bytes. Completion state is not inferred from matching byte counts.
+- Firefox Places download annotations: latest recorded file URI and metadata for
+  each source URL, including logged completion/failure/cancellation, file size and
+  completion time when available. Repeated downloads to earlier destinations
+  cannot be reconstructed from the latest annotation. Missing fields remain
+  unknown; malformed metadata is preserved and reported without stopping other rows.
 
 `/var/log` transfer logs are collected with system logs. rclone `.log`/`.jsonl`
 files are also discovered under user `.cache/rclone`, `.local/state/rclone`,
@@ -110,6 +117,7 @@ only when independently retained; a file name does not imply payload recovery.
 Format references: [NGINX access logging](https://docs.nginx.com/nginx/admin-guide/monitoring/logging/),
 [NGINX byte variables](https://nginx.org/en/docs/http/ngx_http_core_module.html),
 [rclone JSON logging](https://rclone.org/docs/#use-json-log),
+[Firefox download history](https://searchfox.org/firefox-main/source/toolkit/components/downloads/DownloadHistory.sys.mjs),
 [vsftpd transfer logging](https://security.appspot.com/vsftpd/vsftpd_conf.html),
 and [HAR request metadata](https://w3c.github.io/web-performance/specs/HAR/Overview.html).
 
