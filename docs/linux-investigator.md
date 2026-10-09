@@ -31,7 +31,11 @@ The cases contain:
   capture, and decoded packet text.
 - `normalized/events.jsonl`: one event per line, written during collection.
 - `normalized/coverage.jsonl`: source status and reason, including failures,
-  empty sources, and unsupported formats.
+  empty sources, and unsupported formats. Statuses are `collected`, `empty`,
+  `unavailable`, `denied`, `unsupported`, `failed`, `skipped` and `cancelled`.
+  Missing tools/paths are unavailable; filesystem permission errors are denied.
+  Collection interruptions reported by an I/O operation are cancelled; a killed
+  process can still leave an incomplete case without a final status record.
 - `normalized/file-inventory.jsonl`: path, size, and modification time when
   deep inventory is selected.
 - `manifest.jsonl`: source path, copy time, byte count, and SHA-256 for each

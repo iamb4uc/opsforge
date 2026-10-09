@@ -39,7 +39,7 @@ pub fn run(config: &RunConfig, progress: &impl Fn(&str)) -> Result<PathBuf> {
             Err(error) => {
                 case.coverage(&Coverage {
                     source: "live-traffic".into(),
-                    state: CoverageState::Failed,
+                    state: CoverageState::from_error(&error),
                     detail: error.to_string(),
                 })?;
                 None
@@ -158,7 +158,7 @@ fn source(
     if let Err(error) = collect(case) {
         case.coverage(&Coverage {
             source: name.into(),
-            state: CoverageState::Failed,
+            state: CoverageState::from_error(&error),
             detail: error.to_string(),
         })?;
     }
@@ -169,7 +169,7 @@ fn run_command(case: &mut Case, name: &str, program: &str, args: &[&str]) -> Res
     if !command_exists(program) {
         case.coverage(&Coverage {
             source: name.into(),
-            state: CoverageState::Unsupported,
+            state: CoverageState::Unavailable,
             detail: format!("{program} is not installed"),
         })?;
         return Ok(());
@@ -256,7 +256,7 @@ fn collect_journal(case: &mut Case, progress: &impl Fn(&str)) -> Result<()> {
     if !command_exists("journalctl") {
         case.coverage(&Coverage {
             source: "journal".into(),
-            state: CoverageState::Unsupported,
+            state: CoverageState::Unavailable,
             detail: "journalctl is not installed".into(),
         })?;
         return Ok(());
@@ -401,11 +401,11 @@ fn collect_logs(case: &mut Case, progress: &impl Fn(&str)) -> Result<()> {
 }
 
 fn import_path(case: &mut Case, path: &Path, prefix: &str, progress: &impl Fn(&str)) -> Result<()> {
-    if !path.exists() {
+    if let Err(error) = fs::metadata(path) {
         case.coverage(&Coverage {
             source: path.display().to_string(),
-            state: CoverageState::Failed,
-            detail: "path does not exist".into(),
+            state: CoverageState::from_io(&error),
+            detail: format!("import path unavailable: {error}"),
         })?;
         return Ok(());
     }
@@ -434,7 +434,7 @@ fn import_path(case: &mut Case, path: &Path, prefix: &str, progress: &impl Fn(&s
             failed = failed.saturating_add(1);
             case.coverage(&Coverage {
                 source: entry.path().display().to_string(),
-                state: CoverageState::Failed,
+                state: CoverageState::from_error(&error),
                 detail: error.to_string(),
             })?;
             continue;
@@ -682,7 +682,7 @@ fn start_capture(case: &mut Case, seconds: u64) -> Result<Option<LiveCapture>> {
     if !command_exists("tcpdump") || !command_exists("timeout") {
         case.coverage(&Coverage {
             source: "live-traffic".into(),
-            state: CoverageState::Unsupported,
+            state: CoverageState::Unavailable,
             detail: "tcpdump or timeout is not installed".into(),
         })?;
         return Ok(None);

@@ -53,9 +53,29 @@ pub struct Transfer {
 pub enum CoverageState {
     Collected,
     Empty,
+    Unavailable,
+    Denied,
     Unsupported,
     Failed,
     Skipped,
+    Cancelled,
+}
+
+impl CoverageState {
+    pub(crate) fn from_io(error: &std::io::Error) -> Self {
+        match error.kind() {
+            std::io::ErrorKind::NotFound => Self::Unavailable,
+            std::io::ErrorKind::PermissionDenied => Self::Denied,
+            std::io::ErrorKind::Interrupted => Self::Cancelled,
+            _ => Self::Failed,
+        }
+    }
+
+    pub(crate) fn from_error(error: &anyhow::Error) -> Self {
+        error
+            .downcast_ref::<std::io::Error>()
+            .map_or(Self::Failed, Self::from_io)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -251,6 +271,22 @@ impl Case {
 #[cfg(test)]
 mod tests {
     use super::{Case, Coverage, CoverageState, Event, EvidenceLevel, validate_root_output_base};
+
+    #[test]
+    fn coverage_classifies_io_failures_without_losing_context() {
+        for (kind, state) in [
+            (std::io::ErrorKind::NotFound, "unavailable"),
+            (std::io::ErrorKind::PermissionDenied, "denied"),
+            (std::io::ErrorKind::Interrupted, "cancelled"),
+            (std::io::ErrorKind::InvalidData, "failed"),
+        ] {
+            let error = anyhow::Error::new(std::io::Error::from(kind)).context("source collection");
+            assert_eq!(
+                serde_json::to_value(CoverageState::from_error(&error)).expect("state"),
+                state
+            );
+        }
+    }
     use std::fs;
 
     #[test]
