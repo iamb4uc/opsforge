@@ -15,6 +15,10 @@
   const manifest = new Map(data.manifest.map((file) => [file.path, file]));
   $("case-name").textContent = data.name;
   $("case-info").textContent = `Operator: ${data.info.operator || "unknown"} | Started: ${data.info.started_at || "unknown"}`;
+  const completion = window.caseCompletion;
+  $("completion-status").textContent = completion?.status === "finished_review_coverage"
+    ? "Collection finished. Review source coverage for failures and missing history."
+    : `Incomplete case (${completion?.status || "status unknown"}). This dashboard may show an earlier snapshot. Inspect retained JSONL and raw evidence. ${completion?.error || ""}`;
   for (const [key, label, target] of [["events", "Events", "timeline"], ["uploads", "Upload records", "exfil"], ["completed", "Completed uploads", "exfil"], ["downloads", "Download records", "downloads"], ["failed", "Failed sources", "collection"]]) {
     const link = el("a"); link.href = `${target}.html${key === "completed" ? "?status=completed" : key === "failed" ? "?status=failed" : ""}`;
     link.append(el("strong", fmt(data.counts[key])), el("small", label));
@@ -111,7 +115,7 @@
     const tbody = $("table").querySelector("tbody"); tbody.replaceChildren();
     for (const row of matches.slice(page * size, (page + 1) * size)) tbody.append(addRow(row));
     if (!matches.length) { const tr = el("tr"), td = el("td", base.length ? "No records match these filters." : "No records retained for this section. Review source coverage and imported application logs.", "empty"); td.colSpan = headings.length; tr.append(td); tbody.append(tr); }
-    $("result-count").textContent = `${fmt(matches.length)} matching / ${fmt(base.length)} records in this section. Complete case: ${fmt(all.length)} events.`;
+    $("result-count").textContent = `${fmt(matches.length)} matching / ${fmt(base.length)} records in this section. Dashboard snapshot: ${fmt(all.length)} events.`;
     $("page-position").textContent = `Page ${page + 1} of ${pages}`;
     $("previous").disabled = page === 0; $("next").disabled = page + 1 >= pages;
   }

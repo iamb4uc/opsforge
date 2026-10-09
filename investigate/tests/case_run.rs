@@ -35,6 +35,11 @@ fn imported_log_reaches_offline_report_with_escaped_text() {
     assert!(root.join("raw/import-000-000000").exists());
     assert!(root.join("findings.json").exists());
     assert!(root.join("completion.json").exists());
+    let completion: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("completion.json")).expect("status"))
+            .expect("valid status");
+    assert_eq!(completion["status"], "finished_review_coverage");
+    assert!(completion["finished_at"].is_string());
     assert!(
         fs::read_to_string(root.join("checksums.sha256"))
             .expect("checksums")

@@ -10,13 +10,21 @@ use std::{
 use walkdir::WalkDir;
 
 pub fn generate(root: &Path) -> Result<()> {
+    let completion_path = root.join("completion.json");
+    let completion = if completion_path.exists() {
+        serde_json::from_reader(File::open(completion_path)?)?
+    } else {
+        serde_json::json!({"status": "unknown"})
+    };
+    write_completion_script(root, &completion)?;
     let coverage = read_lines::<Coverage>(&root.join("normalized/coverage.jsonl"))?;
     let manifest = read_lines::<EvidenceFile>(&root.join("manifest.jsonl"))?;
     let failures = coverage
         .iter()
         .filter(|row| matches!(row.state, CoverageState::Failed))
         .count();
-    let mut data = BufWriter::new(File::create(root.join("dashboard/events.js"))?);
+    let events_path = root.join("dashboard/events.js.tmp");
+    let mut data = BufWriter::new(File::create(&events_path)?);
     writeln!(data, "window.caseEvents = [")?;
     let (mut count, mut uploads, mut downloads, mut leads, mut completed) =
         (0_u64, 0_u64, 0_u64, 0_u64, 0_u64);
@@ -62,13 +70,14 @@ pub fn generate(root: &Path) -> Result<()> {
     }
     writeln!(data, "\n];")?;
     data.flush()?;
+    fs::rename(events_path, root.join("dashboard/events.js"))?;
     let info = root.join("case-info.json");
     let info: serde_json::Value = if info.exists() {
         serde_json::from_reader(File::open(info)?)?
     } else {
         serde_json::json!({})
     };
-    fs::write(
+    write_atomic(
         root.join("dashboard/case.js"),
         format!(
             "window.caseData = {};\n",
@@ -78,21 +87,21 @@ pub fn generate(root: &Path) -> Result<()> {
                 }))?
         ),
     )?;
-    fs::write(
+    write_atomic(
         root.join("dashboard/style.css"),
         include_str!("dashboard.css"),
     )?;
-    fs::write(root.join("dashboard/app.js"), include_str!("dashboard.js"))?;
-    fs::write(root.join("findings.json"), b"[]\n")?;
-    fs::write(root.join("normalized/findings.json"), b"[]\n")?;
-    fs::write(
+    write_atomic(root.join("dashboard/app.js"), include_str!("dashboard.js"))?;
+    write_atomic(root.join("findings.json"), b"[]\n")?;
+    write_atomic(root.join("normalized/findings.json"), b"[]\n")?;
+    write_atomic(
         root.join("summary.txt"),
         format!(
             "Output: {}\nFindings: 0\nEvents: {count}\nUpload records: {uploads}\nCompleted upload records: {completed}\nNetwork leads: {leads}\nDownloads: {downloads}\nFailed sources: {failures}\n",
             root.display()
         ),
     )?;
-    fs::write(
+    write_atomic(
         root.join("report.md"),
         format!(
             "# Linux investigator case\n\nCase: `{}`\n\n- Events: {count}\n- Upload records: {uploads}\n- Completed upload records: {completed}\n- Download records: {downloads}\n- Network leads: {leads}\n- Failed sources: {failures}\n\nTransfer records retain their source perspective. An upload to a local server is inbound to that server, not proof of device exfiltration. HTTP success means a request was accepted, not that a named file was uploaded. Unknown fields remain unknown.\n\nOpen `dashboard/index.html`. Every normalized event is searchable there; JSONL and raw files remain the evidence of record.\n",
@@ -176,10 +185,14 @@ fn bar_graph(title: &str, counts: &BTreeMap<String, u64>) -> String {
 }
 
 pub fn write_checksums(root: &Path) -> Result<()> {
-    let mut output = File::create(root.join("checksums.sha256"))?;
+    let path = root.join("checksums.sha256.tmp");
+    let mut output = File::create(&path)?;
     for entry in WalkDir::new(root).sort_by_file_name() {
         let entry = entry?;
-        if !entry.file_type().is_file() || entry.file_name() == "checksums.sha256" {
+        if !entry.file_type().is_file()
+            || entry.file_name() == "checksums.sha256"
+            || entry.file_name() == "checksums.sha256.tmp"
+        {
             continue;
         }
         let mut file = File::open(entry.path())?;
@@ -199,6 +212,42 @@ pub fn write_checksums(root: &Path) -> Result<()> {
             entry.path().strip_prefix(root)?.display()
         )?;
     }
+    output.flush()?;
+    fs::rename(path, root.join("checksums.sha256"))?;
+    Ok(())
+}
+
+fn write_atomic(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> Result<()> {
+    let path = path.as_ref();
+    let temporary = path.with_file_name(format!(
+        "{}.tmp",
+        path.file_name().unwrap_or_default().to_string_lossy()
+    ));
+    fs::write(&temporary, contents)?;
+    fs::rename(temporary, path)?;
+    Ok(())
+}
+
+pub(crate) fn write_completion(root: &Path, status: &str, error: Option<&str>) -> Result<()> {
+    let completion = serde_json::json!({
+        "status": status,
+        "updated_at": jiff::Timestamp::now().to_string(),
+        "error": error,
+        "finished_at": if status == "in_progress" { None } else { Some(jiff::Timestamp::now().to_string()) },
+    });
+    let json_path = root.join("completion.json.tmp");
+    fs::write(&json_path, serde_json::to_vec_pretty(&completion)?)?;
+    fs::rename(json_path, root.join("completion.json"))?;
+    write_completion_script(root, &completion)
+}
+
+fn write_completion_script(root: &Path, completion: &serde_json::Value) -> Result<()> {
+    let script_path = root.join("dashboard/completion.js.tmp");
+    fs::write(
+        &script_path,
+        format!("window.caseCompletion = {};\n", script_json(completion)?),
+    )?;
+    fs::rename(script_path, root.join("dashboard/completion.js"))?;
     Ok(())
 }
 
@@ -243,9 +292,9 @@ fn page(root: &Path, name: &str, title: &str, note: &str, content: &str) -> Resu
         })
         .collect::<String>();
     let html = format!(
-        r##"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'"><title>{title} | opsforge</title><link rel="stylesheet" href="style.css"><script defer src="case.js"></script><script defer src="events.js"></script><script defer src="app.js"></script></head><body data-view="{name}"><a class="skip" href="#main">Skip to records</a><header><b>opsforge</b><span>Linux investigator</span><a href="../report.md">Case report</a></header><div class="case-strip"><strong id="case-name">Case</strong><span id="case-info"></span></div><nav aria-label="Case sections">{nav}</nav><main id="main"><h1>{title}</h1><p class="note">{note}</p><section id="totals" aria-label="Case counts"></section>{content}<section class="panel" id="records"><h2 id="records-title">Records</h2><form id="filters"><label>Search<input id="search" type="search" placeholder="File, URL, user, application or raw text"></label><label>Application<select id="application"><option value="">All applications</option></select></label><label>Source<select id="source"><option value="">All sources</option></select></label><label>Outcome<select id="status"><option value="">All outcomes</option></select></label><label>From (UTC)<input id="from" type="datetime-local"></label><label>Until (UTC)<input id="until" type="datetime-local"></label><label>Sort<select id="sort"><option value="newest">Newest time</option><option value="oldest">Oldest time</option><option value="collection">Collection order</option></select></label><label class="check"><input id="packets" type="checkbox">Include packet summaries</label><button type="reset">Reset filters</button></form><p id="result-count" role="status" aria-live="polite"></p><div class="scroll" tabindex="0" aria-label="Records table"><table id="table"><thead></thead><tbody></tbody></table></div><div class="pagination"><button id="previous" type="button">Previous</button><span id="page-position"></span><button id="next" type="button">Next</button><label>Rows<select id="page-size"><option>50</option><option selected>100</option><option>250</option></select></label></div></section><noscript>Enable JavaScript to search the complete case. Raw and normalized evidence remains available below.</noscript></main><footer><a href="../normalized/events.jsonl" download>All events (JSONL)</a><a href="../normalized/coverage.jsonl" download>Coverage (JSONL)</a><a href="../manifest.jsonl" download>Raw manifest</a><a href="../checksums.sha256" download>Case checksums</a><span>Offline report. Keep the entire case directory together.</span></footer></body></html>"##
+        r##"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'"><title>{title} | opsforge</title><link rel="stylesheet" href="style.css"><script defer src="completion.js"></script><script defer src="case.js"></script><script defer src="events.js"></script><script defer src="app.js"></script></head><body data-view="{name}"><a class="skip" href="#main">Skip to records</a><header><b>opsforge</b><span>Linux investigator</span><a href="../report.md">Case report</a></header><div class="case-strip"><strong id="case-name">Case</strong><span id="case-info"></span></div><nav aria-label="Case sections">{nav}</nav><main id="main"><p id="completion-status" role="status" class="note"></p><h1>{title}</h1><p class="note">{note}</p><section id="totals" aria-label="Case counts"></section>{content}<section class="panel" id="records"><h2 id="records-title">Records</h2><form id="filters"><label>Search<input id="search" type="search" placeholder="File, URL, user, application or raw text"></label><label>Application<select id="application"><option value="">All applications</option></select></label><label>Source<select id="source"><option value="">All sources</option></select></label><label>Outcome<select id="status"><option value="">All outcomes</option></select></label><label>From (UTC)<input id="from" type="datetime-local"></label><label>Until (UTC)<input id="until" type="datetime-local"></label><label>Sort<select id="sort"><option value="newest">Newest time</option><option value="oldest">Oldest time</option><option value="collection">Collection order</option></select></label><label class="check"><input id="packets" type="checkbox">Include packet summaries</label><button type="reset">Reset filters</button></form><p id="result-count" role="status" aria-live="polite"></p><div class="scroll" tabindex="0" aria-label="Records table"><table id="table"><thead></thead><tbody></tbody></table></div><div class="pagination"><button id="previous" type="button">Previous</button><span id="page-position"></span><button id="next" type="button">Next</button><label>Rows<select id="page-size"><option>50</option><option selected>100</option><option>250</option></select></label></div></section><noscript>Enable JavaScript to search the complete case. Raw and normalized evidence remains available below.</noscript></main><footer><a href="../normalized/events.jsonl" download>All events (JSONL)</a><a href="../normalized/coverage.jsonl" download>Coverage (JSONL)</a><a href="../manifest.jsonl" download>Raw manifest</a><a href="../checksums.sha256" download>Case checksums</a><span>Offline report. Keep the entire case directory together.</span></footer></body></html>"##
     );
-    fs::write(root.join("dashboard").join(format!("{name}.html")), html)?;
+    write_atomic(root.join("dashboard").join(format!("{name}.html")), html)?;
     Ok(())
 }
 
