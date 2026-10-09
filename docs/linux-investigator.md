@@ -163,6 +163,9 @@ It does not enable logging or create missing history. A missing discovery path
 does not establish whether the application was installed or used.
 
 Text records retain application/user context from their discovery location.
+The account label identifies the current discovery home, rather than an
+unlogged transaction identity. A username explicitly retained in a transaction
+record takes precedence over discovery context.
 Unrecognized records remain leads, with their original lines and raw hashes.
 AWS CLI `history.db` is copied with its available SQLite sidecars, then read from
 an isolated working copy. Command/request IDs, event type, recorded time and

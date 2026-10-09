@@ -509,7 +509,7 @@ pub(crate) fn normalize_text_log(
                     event.application = Some(application.into());
                 }
                 if event.user.is_none() {
-                    event.user = Some(user.into());
+                    event.user = Some(format!("{user} (current account for discovery home)"));
                 }
             }
             event.evidence_line = Some(count);
@@ -533,7 +533,7 @@ pub(crate) fn normalize_text_log(
             }
             .into(),
             application: context.map(|(application, _)| application.into()),
-            user: context.map(|(_, user)| user.into()),
+            user: context.map(|(_, user)| format!("{user} (current account for discovery home)")),
             destination: None,
             detail: line,
             evidence: format!("raw/{name}"),
