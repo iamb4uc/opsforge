@@ -532,17 +532,13 @@ fn import_path(case: &mut Case, path: &Path, prefix: &str, progress: &impl Fn(&s
         }
         let name = format!("{prefix}-{attempted:06}");
         attempted = attempted.saturating_add(1);
-        if let Err(error) = case.copy_evidence(entry.path(), &name) {
-            failed = failed.saturating_add(1);
-            case.coverage(&Coverage {
-                source: entry.path().display().to_string(),
-                state: CoverageState::from_error(&error),
-                detail: error.to_string(),
-            })?;
-            continue;
-        }
-        let raw = case.root.join("raw").join(&name);
-        let parsed = normalize_text_log(case, &raw, &name, "imported-log", entry.path(), None);
+        let parsed = if crate::applications::is_thunderbird_index(entry.path()) {
+            crate::applications::thunderbird_index(case, entry.path(), &name)
+        } else {
+            case.copy_evidence(entry.path(), &name).and_then(|raw| {
+                normalize_text_log(case, &raw, &name, "imported-log", entry.path(), None)
+            })
+        };
         let state = normalization_state(&parsed);
         if !matches!(
             state,
@@ -554,12 +550,16 @@ fn import_path(case: &mut Case, path: &Path, prefix: &str, progress: &impl Fn(&s
             source: entry.path().display().to_string(),
             state,
             detail: match parsed {
-                Ok(lines) => format!("{lines} text records normalized"),
-                Err(error) => format!("raw preserved; normalization error: {error}"),
+                Ok(lines) => format!("{lines} records normalized"),
+                Err(error) => format!(
+                    "collection or normalization error; inspect any retained raw files: {error}"
+                ),
             },
         })?;
-        count = count.saturating_add(1);
-        if count.is_multiple_of(100) {
+        if case.root.join("raw").join(&name).is_file() {
+            count = count.saturating_add(1);
+        }
+        if count > 0 && count.is_multiple_of(100) {
             progress(&format!("{prefix}: {count} files saved"));
         }
     }
@@ -579,7 +579,7 @@ fn import_path(case: &mut Case, path: &Path, prefix: &str, progress: &impl Fn(&s
     Ok(())
 }
 
-fn normalization_state(result: &Result<u64>) -> CoverageState {
+pub(crate) fn normalization_state(result: &Result<u64>) -> CoverageState {
     match result {
         Ok(0) => CoverageState::Empty,
         Ok(_) => CoverageState::Collected,
