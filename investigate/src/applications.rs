@@ -163,7 +163,12 @@ fn collect_home(
                 }
             };
             let path = entry.path();
-            if !entry.file_type().is_file() || !is_log(path) || !seen.insert(path.to_owned()) {
+            let manifest = *application == "gcloud"
+                && path.extension().is_some_and(|extension| extension == "csv");
+            if !entry.file_type().is_file()
+                || (!is_log(path) && !manifest)
+                || !seen.insert(path.to_owned())
+            {
                 continue;
             }
             let name = format!("application-{:06}", offset + attempted);
@@ -222,6 +227,132 @@ fn is_log(path: &Path) -> bool {
                 || name.ends_with(".jsonl")
                 || name.contains(".log.")
         })
+}
+
+pub(crate) fn gcloud_manifest(
+    case: &mut Case,
+    raw: &Path,
+    name: &str,
+    source: &str,
+) -> Result<Option<u64>> {
+    let mut input = BufReader::new(File::open(raw)?);
+    let mut header = String::new();
+    input.read_line(&mut header)?;
+    let header = header.trim_end_matches(['\r', '\n']);
+    let offset = match header {
+        "Source,Destination,Start,End,Md5,Source Size,Bytes Transferred,Result,Description" => 0,
+        "Source,Destination,Start,End,Md5,UploadId,Source Size,Bytes Transferred,Result,Description" => {
+            1
+        }
+        _ => return Ok(None),
+    };
+    let mut line = 1_u64;
+    let mut count = 0;
+    loop {
+        crate::runtime::check_cancelled()?;
+        let start = line + 1;
+        let mut record = String::new();
+        let fields = loop {
+            let mut next = String::new();
+            if input.read_line(&mut next)? == 0 {
+                if record.is_empty() {
+                    return Ok(Some(count));
+                }
+                anyhow::bail!("unterminated transfer manifest record at line {start}");
+            }
+            line += 1;
+            record.push_str(&next);
+            if let Some(fields) = manifest_fields(&record)? {
+                break fields;
+            }
+        };
+        anyhow::ensure!(
+            fields.len() == 9 + offset,
+            "wrong transfer manifest column count at line {start}"
+        );
+        let from = &fields[0];
+        let to = &fields[1];
+        let direction = if from.starts_with("file:///") && cloud_object(to) {
+            Some("upload")
+        } else if cloud_object(from) && to.starts_with("file:///") {
+            Some("download")
+        } else {
+            None
+        };
+        let status = match fields[7 + offset].as_str() {
+            "OK" => Some("completed"),
+            "error" => Some("failed"),
+            "skip" => Some("skipped"),
+            _ => None,
+        };
+        let bytes = if status == Some("completed") && !fields[6 + offset].is_empty() {
+            Some(fields[6 + offset].parse::<u64>()?)
+        } else {
+            None
+        };
+        let transfer = direction.zip(status).map(|(direction, status)| Transfer {
+            direction: direction.into(), status: status.into(), protocol: "Cloud Storage".into(), perspective: "client".into(),
+            file: Some(from.clone()), target: Some(to.clone()), peer: None, bytes,
+            bytes_basis: "client successful-copy progress; not source size or wire bytes; error/skip zero is a manifest sentinel and leaves actual bytes unknown".into(), method: Some("copy manifest".into()),
+        });
+        case.event(&Event {
+            timestamp: fields[3].parse::<jiff::Timestamp>().ok().map(|time|time.to_string()), source: source.into(),
+            kind: transfer.as_ref().map_or_else(|| "cloud-copy-record".into(), |transfer|format!("{}-transfer", transfer.direction)),
+            application: Some("Cloud Storage transfer manifest".into()), user: None, destination: Some(to.clone()),
+            detail: format!("{record}Client-reported copy result. Source/target URIs, start/end and source size remain as logged; source size is not transferred bytes. Peer and authentication identity are not retained. Cloud-to-cloud/local copies and unknown results do not become device uploads/downloads. This schema is also used by gsutil; the producing executable is not established by the header."),
+            evidence: format!("raw/{name}"), level: if transfer.is_some() { EvidenceLevel::Recorded } else { EvidenceLevel::Lead }, transfer, evidence_line: Some(start),
+        })?;
+        count += 1;
+    }
+}
+
+fn cloud_object(uri: &str) -> bool {
+    uri.strip_prefix("gs://")
+        .and_then(|path| path.split_once('/'))
+        .is_some_and(|(bucket, object)| {
+            !bucket.is_empty() && !bucket.contains(char::is_whitespace) && !object.is_empty()
+        })
+}
+
+fn manifest_fields(record: &str) -> Result<Option<Vec<String>>> {
+    let record = record.strip_suffix('\n').unwrap_or(record);
+    let record = record.strip_suffix('\r').unwrap_or(record);
+    let mut chars = record.chars().peekable();
+    let (mut quoted, mut closed) = (false, false);
+    let mut fields = Vec::new();
+    let mut field = String::new();
+    while let Some(character) = chars.next() {
+        if quoted {
+            if character == '"' {
+                if chars.peek() == Some(&'"') {
+                    chars.next();
+                    field.push('"');
+                } else {
+                    quoted = false;
+                    closed = true;
+                }
+            } else {
+                field.push(character);
+            }
+        } else {
+            match character {
+                ',' => {
+                    fields.push(std::mem::take(&mut field));
+                    closed = false;
+                }
+                '"' if field.is_empty() && !closed => quoted = true,
+                '"' | '\r' | '\n' => anyhow::bail!("invalid transfer manifest quoting"),
+                _ if closed => anyhow::bail!("data after transfer manifest closing quote"),
+                _ => field.push(character),
+            }
+        }
+    }
+    if quoted {
+        Ok(None)
+    } else {
+        fields.push(field);
+        Ok(Some(fields))
+    }
 }
 
 fn aws_history(case: &mut Case, path: &Path, name: &str, user: &str) -> Result<u64> {
@@ -359,6 +490,58 @@ fn aws_transfer(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn gcloud_discovery_collects_existing_csv_without_treating_home_owner_as_auth_identity() {
+        let base =
+            std::env::temp_dir().join(format!("opsforge-gcloud-discovery-{}", std::process::id()));
+        let home = base.join("home");
+        let logs = home.join(".config/gcloud/logs");
+        std::fs::create_dir_all(&logs).expect("logs");
+        std::fs::write(logs.join("transfer.csv"), "Source,Destination,Start,End,Md5,Source Size,Bytes Transferred,Result,Description\nfile:///local/source,gs://bucket/object,2026-10-10T05:35:56Z,2026-10-10T05:35:57Z,,39,39,OK,\n").expect("manifest");
+        let mut case = crate::case::Case::new(&base.join("cases")).expect("case");
+        assert_eq!(
+            super::collect_home(&mut case, "operator", &home, 0, &|_| {}).expect("collection"),
+            (1, 1, 0)
+        );
+        let event: serde_json::Value = serde_json::from_str(
+            std::fs::read_to_string(case.root.join("normalized/events.jsonl"))
+                .expect("events")
+                .trim(),
+        )
+        .expect("event");
+        assert!(event["user"].is_null());
+        assert_eq!(event["transfer"]["bytes"], 39);
+        drop(case);
+        std::fs::remove_dir_all(base).expect("fixture cleanup");
+    }
+
+    #[test]
+    fn manifest_csv_preserves_quotes_commas_newlines_and_rejects_broken_records() {
+        assert_eq!(
+            super::manifest_fields("\"name, with \"\"quotes\"\"\",target,,OK\r\n")
+                .unwrap()
+                .unwrap(),
+            ["name, with \"quotes\"", "target", "", "OK"]
+        );
+        assert!(super::manifest_fields("\"unfinished\n").unwrap().is_none());
+        assert_eq!(
+            super::manifest_fields("\"first\nsecond\",target\n")
+                .unwrap()
+                .unwrap(),
+            ["first\nsecond", "target"]
+        );
+        for line in [
+            "\"closed\"junk,target",
+            "unquoted\"quote,target",
+            "unquoted\nnewline,target",
+        ] {
+            assert!(super::manifest_fields(line).is_err(), "{line}");
+        }
+        assert!(super::cloud_object("gs://bucket/object with spaces#123"));
+        assert!(!super::cloud_object("gs://bucket/"));
+        assert!(!super::cloud_object("gs://bad bucket/object"));
+    }
+
     #[test]
     fn package_inventory_keeps_manager_identity_without_claiming_network_activity() {
         for (source, line, name) in [
