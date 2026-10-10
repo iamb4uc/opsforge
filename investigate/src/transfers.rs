@@ -268,6 +268,8 @@ struct FileZillaSession {
 
 #[derive(Default)]
 pub struct Parser {
+    azure_commands: BTreeMap<u32, Option<String>>,
+    azure_console_runs: u32,
     filezilla: BTreeMap<(u32, u32), FileZillaSession>,
     rclone_paths: Option<(String, String, bool)>,
     network_backend: Option<String>,
@@ -276,6 +278,159 @@ pub struct Parser {
 }
 
 impl Parser {
+    fn azure_event(&mut self, line: &str, source: &str, raw: &str) -> Option<Event> {
+        let (pid, timestamp, message) = if let Some(rest) = line.strip_prefix("CMD-LOG-LINE-BEGIN ")
+        {
+            let mut fields = rest.splitn(5, " | ");
+            let pid = fields.next()?.parse::<u32>().ok()?;
+            let stamp = fields.next()?;
+            if pid == 0 || fields.next()? != "INFO" || fields.next()? != "az_command_data_logger" {
+                return None;
+            }
+            let stamp = stamp.replace(' ', "T").replace(',', ".");
+            stamp.parse::<jiff::civil::DateTime>().ok()?;
+            (pid, Some(stamp), fields.next()?)
+        } else {
+            (
+                0,
+                None,
+                line.strip_prefix("INFO: az_command_data_logger: ")?,
+            )
+        };
+        let (command, kind, level, context) = if let Some(args) =
+            message.strip_prefix("command args: ")
+        {
+            let command = args
+                .split_whitespace()
+                .take(3)
+                .collect::<Vec<_>>()
+                .join(" ");
+            let operation = command.strip_prefix("storage blob ");
+            let supported = matches!(
+                operation,
+                Some("upload" | "download" | "upload-batch" | "download-batch")
+            );
+            if self.azure_commands.len() >= 4096 {
+                self.azure_commands.clear();
+            }
+            if pid == 0 {
+                self.azure_console_runs = self.azure_console_runs.saturating_add(1);
+                if self.azure_console_runs > 1 {
+                    self.azure_commands.insert(pid, None);
+                    return None;
+                }
+            }
+            if let Some(context) = self.azure_commands.get_mut(&pid) {
+                *context = None;
+                return None;
+            }
+            self.azure_commands
+                .insert(pid, supported.then(|| command.clone()));
+            if !supported {
+                return None;
+            }
+            (
+                command,
+                "command-intent",
+                EvidenceLevel::Lead,
+                "Command arguments are redacted; this records intent only.".to_owned(),
+            )
+        } else {
+            let exit = message.strip_prefix("exit code: ")?;
+            if pid == 0 {
+                self.azure_console_runs = self.azure_console_runs.saturating_sub(1);
+                if self.azure_console_runs > 0 {
+                    self.azure_commands.insert(pid, None);
+                    return None;
+                }
+            }
+            let command = self.azure_commands.remove(&pid)??;
+            let exit = exit.parse::<u8>().ok()?;
+            (
+                command,
+                "command-result",
+                EvidenceLevel::Recorded,
+                format!(
+                    "Command exit code {exit}; this is not a per-file transfer result or proof of payload completion."
+                ),
+            )
+        };
+        let direction = if command.contains(" upload") {
+            "upload"
+        } else {
+            "download"
+        };
+        Some(Event {
+            timestamp,
+            source: source.into(),
+            kind: format!("{direction}-{kind}"),
+            application: Some("Azure CLI".into()),
+            user: None,
+            destination: None,
+            detail: format!(
+                "{line}\n{command}: {context} Filename, endpoint, identity and bytes are unknown. Log time has no retained timezone; console logs lack a timestamp."
+            ),
+            evidence: raw.into(),
+            level,
+            transfer: None,
+            evidence_line: None,
+        })
+    }
+
+    fn azure_http_event(&self, line: &str, source: &str, raw: &str) -> Option<Event> {
+        let command = self.azure_commands.get(&0)?.as_deref()?;
+        let rest = line.strip_prefix("DEBUG: urllib3.connectionpool: ")?;
+        let (endpoint, rest) = rest.split_once(" \"")?;
+        let authority = endpoint
+            .strip_prefix("https://")
+            .or_else(|| endpoint.strip_prefix("http://"))?;
+        if authority.is_empty()
+            || authority.contains(['/', '@', '"'])
+            || authority.contains(char::is_whitespace)
+        {
+            return None;
+        }
+        let (request, response) = rest.split_once("\" ")?;
+        let mut request = request.split_whitespace();
+        let method = request.next()?;
+        let path = request.next()?;
+        if !path.starts_with('/') || request.next()? != "HTTP/1.1" || request.next().is_some() {
+            return None;
+        }
+        if !(method == "PUT" && command.contains(" upload")
+            || method == "GET" && command.contains(" download"))
+        {
+            return None;
+        }
+        let mut response = response.split_whitespace();
+        let status = response.next()?.parse::<u64>().ok()?;
+        let length = response.next()?;
+        if response.next().is_some() || (length != "None" && length.parse::<u64>().is_err()) {
+            return None;
+        }
+        let target = format!("{endpoint}{path}");
+        let mut transfer =
+            http_transfer(method, target.clone(), status, Some(authority.into()), None)?;
+        transfer.perspective = "client".into();
+        transfer.bytes_basis =
+            "unknown; urllib3 response length is not consumed payload or upload bytes".into();
+        Some(Event {
+            timestamp: None,
+            source: source.into(),
+            kind: format!("{}-request", transfer.direction),
+            application: Some("Azure CLI".into()),
+            user: None,
+            destination: Some(target),
+            detail: format!(
+                "{line}\nMatched command context: {command}. HTTP response outcome only; requests can be ranges, blocks or metadata. No per-file completion, local filename, authentication identity or actual payload bytes inferred. Console log has no timestamp."
+            ),
+            evidence: raw.into(),
+            level: EvidenceLevel::Recorded,
+            transfer: Some(transfer),
+            evidence_line: None,
+        })
+    }
+
     fn filezilla_event(&mut self, line: &str, source: &str, raw: &str) -> Option<Event> {
         let date = line.get(..10)?;
         let time = line.get(11..19)?;
@@ -397,6 +552,12 @@ impl Parser {
     }
 
     pub fn parse(&mut self, line: &str, source: &str, raw: &str) -> Option<Event> {
+        if let Some(event) = self.azure_event(line, source, raw) {
+            return Some(event);
+        }
+        if let Some(event) = self.azure_http_event(line, source, raw) {
+            return Some(event);
+        }
         if let Some(event) = nextcloud_event(line, source, raw) {
             return Some(event);
         }
@@ -1151,6 +1312,96 @@ mod tests {
 
     use super::{Parser, har_events};
     use serde_json::json;
+
+    #[test]
+    fn azure_command_results_do_not_claim_file_completion_and_debug_requires_context() {
+        let mut parser = Parser::default();
+        let metadata = |pid, message: &str| {
+            format!(
+                "CMD-LOG-LINE-BEGIN {pid} | 2026-10-09 21:09:13,797 | INFO | az_command_data_logger | {message}"
+            )
+        };
+        let start = "command args: storage blob upload --file {} --name {}";
+        assert!(
+            parser
+                .parse(&metadata(42, start), "import", "raw/azure")
+                .unwrap()
+                .transfer
+                .is_none()
+        );
+        parser.parse(
+            &metadata(43, "command args: storage blob download --file {}"),
+            "import",
+            "raw/azure",
+        );
+        let failed = parser
+            .parse(&metadata(43, "exit code: 3"), "import", "raw/azure")
+            .unwrap();
+        assert_eq!(failed.kind, "download-command-result");
+        assert!(failed.transfer.is_none() && failed.detail.contains("exit code 3"));
+        let success = parser
+            .parse(&metadata(42, "exit code: 0"), "import", "raw/azure")
+            .unwrap();
+        assert_eq!(
+            success.timestamp.as_deref(),
+            Some("2026-10-09T21:09:13.797")
+        );
+        assert!(success.transfer.is_none());
+        assert!(
+            parser
+                .parse(&metadata(42, "exit code: 0"), "import", "raw/azure")
+                .is_none()
+        );
+        let http = "DEBUG: urllib3.connectionpool: https://example.test:443 \"PUT /container/file?comp=block HTTP/1.1\" 201 0";
+        assert!(parser.parse(http, "import", "raw/azure").is_none());
+        let console = format!("INFO: az_command_data_logger: {start}");
+        parser.parse(&console, "import", "raw/azure");
+        let event = parser.parse(http, "import", "raw/azure").unwrap();
+        let transfer = event.transfer.unwrap();
+        assert_eq!(transfer.status, "accepted");
+        assert_eq!(transfer.perspective, "client");
+        assert!(transfer.bytes.is_none() && transfer.file.is_none());
+        assert!(event.timestamp.is_none());
+        parser.parse(&console, "import", "raw/azure");
+        assert!(parser.parse(http, "import", "raw/azure").is_none());
+        parser.parse(
+            "INFO: az_command_data_logger: exit code: 0",
+            "import",
+            "raw/azure",
+        );
+        assert!(parser.parse(http, "import", "raw/azure").is_none());
+        parser.parse(&console, "import", "raw/azure");
+        assert!(parser.parse(http, "import", "raw/azure").is_none());
+        parser.parse(
+            "INFO: az_command_data_logger: exit code: 0",
+            "import",
+            "raw/azure",
+        );
+        parser.parse(
+            "INFO: az_command_data_logger: exit code: 0",
+            "import",
+            "raw/azure",
+        );
+        parser.parse(
+            "INFO: az_command_data_logger: command args: storage blob download --name {}",
+            "import",
+            "raw/azure",
+        );
+        let missing = parser.parse("DEBUG: urllib3.connectionpool: http://127.0.0.1:10000 \"GET /account/container/missing HTTP/1.1\" 404 None", "import", "raw/azure").unwrap();
+        assert_eq!(missing.transfer.unwrap().status, "failed");
+        for line in [
+            "DEBUG: urllib3.connectionpool: http://host \"GET /x HTTP/1.1\" 206 -1",
+            "DEBUG: urllib3.connectionpool: http://host \"GET /x HTTP/1.1\" 999 38",
+            "DEBUG: urllib3.connectionpool: http://user@host \"GET /x HTTP/1.1\" 200 38",
+            "CMD-LOG-LINE-BEGIN 0 | 2026-10-09 21:09:13,797 | INFO | az_command_data_logger | exit code: 0",
+            "CMD-LOG-LINE-BEGIN 42 | 2026-02-30 21:09:13,797 | INFO | az_command_data_logger | exit code: 0",
+        ] {
+            assert!(
+                parser.parse(line, "import", "raw/azure").is_none(),
+                "{line}"
+            );
+        }
+    }
 
     #[test]
     fn syncthing_audit_keeps_local_operations_separate_from_network_transfers() {
