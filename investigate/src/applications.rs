@@ -32,6 +32,11 @@ const LOCATIONS: &[(&str, &str)] = &[
     ("Syncthing", ".local/state/syncthing"),
     ("Syncthing", ".config/syncthing"),
     ("Thunderbird", ".thunderbird"),
+    (
+        "Thunderbird",
+        ".var/app/org.mozilla.Thunderbird/.thunderbird",
+    ),
+    ("Thunderbird", "snap/thunderbird/common/.thunderbird"),
     ("Evolution", ".local/share/evolution/logs"),
     ("Slack", ".config/Slack/logs"),
     ("Discord", ".config/discord/logs"),
@@ -177,7 +182,9 @@ fn collect_home(
                 "Application log: {application} / {user} / {}",
                 path.display()
             ));
-            let parsed = if *application == "AWS CLI"
+            let parsed = if is_thunderbird_index(path) {
+                thunderbird_index(case, path, &name)
+            } else if *application == "AWS CLI"
                 && path.file_name().is_some_and(|name| name == "history.db")
             {
                 aws_history(case, path, &name, user)
@@ -193,6 +200,7 @@ fn collect_home(
                     )
                 })
             };
+            let state = collect::normalization_state(&parsed);
             match parsed {
                 Ok(lines) => {
                     count += 1;
@@ -202,7 +210,7 @@ fn collect_home(
                     failed += 1;
                     case.coverage(&Coverage {
                         source: path.display().to_string(),
-                        state: CoverageState::from_error(&error),
+                        state,
                         detail: format!(
                             "copy or parser failed; inspect any retained raw file: {error}"
                         ),
@@ -210,7 +218,7 @@ fn collect_home(
                 }
             }
         }
-        case.coverage(&Coverage { source, state: if failed > 0 { CoverageState::Failed } else if count == 0 { CoverageState::Empty } else { CoverageState::Collected }, detail: format!("{count} files parsed; {failed} failed; log-name discovery only; credentials/configuration and message stores are not parsed") })?;
+        case.coverage(&Coverage { source, state: if failed > 0 { CoverageState::Failed } else if count == 0 { CoverageState::Empty } else { CoverageState::Collected }, detail: format!("{count} files parsed; {failed} failed; recognized logs and Thunderbird search indexes only; credentials/configuration and other message stores are not parsed") })?;
         parsed_files += count;
         errors += failed;
     }
@@ -222,11 +230,96 @@ fn is_log(path: &Path) -> bool {
         .and_then(|name| name.to_str())
         .is_some_and(|name| {
             name == "history.db"
+                || name == "global-messages-db.sqlite"
                 || name == "wget-log"
                 || name.ends_with(".log")
                 || name.ends_with(".jsonl")
                 || name.contains(".log.")
         })
+}
+
+pub(crate) fn is_thunderbird_index(path: &Path) -> bool {
+    path.file_name()
+        .is_some_and(|name| name == "global-messages-db.sqlite")
+}
+
+pub(crate) fn thunderbird_index(case: &mut Case, path: &Path, name: &str) -> Result<u64> {
+    // Mozilla's mozporter tokenizer is unavailable; check and read stored tables.
+    let db = browser::snapshot_checked(
+        case,
+        path,
+        name,
+        &[
+            "PRAGMA quick_check(messages)",
+            "PRAGMA quick_check(folderLocations)",
+            "PRAGMA quick_check(messagesText_content)",
+        ],
+    )?;
+    db.execute_batch("PRAGMA query_only=ON; PRAGMA trusted_schema=OFF")?;
+    let version: i64 = db.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    if version != 30 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("unsupported Thunderbird search index schema {version}; raw database retained"),
+        )
+        .into());
+    }
+    let mut statement = db.prepare(
+        "SELECT m.id,m.folderID,m.messageKey,m.date,m.headerMessageID,m.deleted,
+         f.folderURI,t.c1subject,t.c2attachmentNames,t.c3author,t.c4recipients
+         FROM messages m LEFT JOIN folderLocations f ON f.id=m.folderID
+         LEFT JOIN messagesText_content t ON t.docid=m.id ORDER BY m.id",
+    )?;
+    let mut rows = statement.query([])?;
+    let mut count = 0;
+    let mut failed = 0;
+    while let Some(row) = rows.next()? {
+        crate::runtime::check_cancelled()?;
+        let parsed = (|| -> rusqlite::Result<_> {
+            let id: i64 = row.get(0)?;
+            let folder: Option<i64> = row.get(1)?;
+            let key: Option<i64> = row.get(2)?;
+            let time: Option<i64> = row.get(3)?;
+            Ok((
+                time,
+                serde_json::json!({
+                    "index_id": id, "folder_id": folder, "message_key": key,
+                    "date_microseconds": time, "header_message_id": row.get::<_, Option<String>>(4)?,
+                    "deleted": row.get::<_, i64>(5)?, "folder_uri": row.get::<_, Option<String>>(6)?,
+                    "subject": row.get::<_, Option<String>>(7)?,
+                    "attachment_names": row.get::<_, Option<String>>(8)?,
+                    "author": row.get::<_, Option<String>>(9)?,
+                    "recipients": row.get::<_, Option<String>>(10)?,
+                    "ghost_reference": folder.is_none() && key.is_none(),
+                }),
+            ))
+        })();
+        let (time, record) = match parsed {
+            Ok(record) => record,
+            Err(error) => {
+                failed += 1;
+                case.coverage(&Coverage {
+                    source: path.display().to_string(),
+                    state: CoverageState::Failed,
+                    detail: format!("invalid Thunderbird index row: {error}"),
+                })?;
+                continue;
+            }
+        };
+        case.event(&Event {
+            timestamp: time.and_then(|time| jiff::Timestamp::from_microsecond(time).ok()).map(|time| time.to_string()),
+            source: "thunderbird-search-index".into(), kind: "mail-index-reference".into(),
+            application: Some("Thunderbird".into()), user: None, destination: None,
+            detail: format!("{record}; Cached search-index metadata, including ghost/deleted references. Date is retained message time in UNIX microseconds, not transfer time. Attachment names remain one exact stored string. Folder labels, sender/recipient text and index rows do not prove delivery, authentication, file availability or payload bytes."),
+            evidence: format!("raw/{name}"), level: EvidenceLevel::Recorded,
+            transfer: None, evidence_line: None,
+        })?;
+        count += 1;
+    }
+    if failed > 0 {
+        anyhow::bail!("{failed} invalid Thunderbird index rows; {count} valid rows retained");
+    }
+    Ok(count)
 }
 
 pub(crate) fn gcloud_manifest(
@@ -490,6 +583,47 @@ fn aws_transfer(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn thunderbird_discovery_finds_native_flatpak_and_snap_indexes_without_configs() {
+        let base = std::env::temp_dir().join(format!(
+            "opsforge-thunderbird-discovery-{}",
+            std::process::id()
+        ));
+        let home = base.join("home");
+        for relative in [
+            ".thunderbird",
+            ".var/app/org.mozilla.Thunderbird/.thunderbird",
+            "snap/thunderbird/common/.thunderbird",
+        ] {
+            let profile = home.join(relative).join("profile");
+            std::fs::create_dir_all(&profile).expect("profile");
+            std::fs::write(
+                profile.join("prefs.js"),
+                "private config must not be copied",
+            )
+            .expect("config");
+            let db = rusqlite::Connection::open(profile.join("global-messages-db.sqlite"))
+                .expect("database");
+            db.execute_batch("PRAGMA user_version=30;
+                CREATE TABLE messages(id INTEGER PRIMARY KEY,folderID INTEGER,messageKey INTEGER,date INTEGER,headerMessageID TEXT,deleted INTEGER);
+                CREATE TABLE folderLocations(id INTEGER PRIMARY KEY,folderURI TEXT);
+                CREATE TABLE messagesText_content(docid INTEGER PRIMARY KEY,c1subject,c2attachmentNames,c3author,c4recipients);").expect("schema");
+        }
+        let mut case = crate::case::Case::new(&base.join("cases")).expect("case");
+        assert_eq!(
+            super::collect_home(&mut case, "operator", &home, 0, &|_| {}).expect("collection"),
+            (3, 3, 0)
+        );
+        assert_eq!(
+            std::fs::read_dir(case.root.join("raw"))
+                .expect("raw")
+                .count(),
+            3
+        );
+        drop(case);
+        std::fs::remove_dir_all(base).expect("fixture cleanup");
+    }
+
     #[test]
     fn gcloud_discovery_collects_existing_csv_without_treating_home_owner_as_auth_identity() {
         let base =

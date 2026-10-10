@@ -98,6 +98,15 @@ pub(crate) fn user_homes() -> Result<Vec<(String, PathBuf)>> {
 }
 
 pub(crate) fn snapshot(case: &mut Case, source: &Path, name: &str) -> Result<Connection> {
+    snapshot_checked(case, source, name, &["PRAGMA quick_check"])
+}
+
+pub(crate) fn snapshot_checked(
+    case: &mut Case,
+    source: &Path,
+    name: &str,
+    checks: &[&str],
+) -> Result<Connection> {
     let working = case.root.join("normalized").join(name);
     let raw = case.copy_evidence(source, name)?;
     fs::copy(raw, &working)?;
@@ -125,9 +134,15 @@ pub(crate) fn snapshot(case: &mut Case, source: &Path, name: &str) -> Result<Con
     })?;
     let db = Connection::open(working)?;
     db.busy_timeout(Duration::from_millis(250))?;
-    let check: String = db.query_row("PRAGMA quick_check", [], |row| row.get(0))?;
-    if check != "ok" {
-        bail!("browser working copy failed SQLite quick_check: {check}");
+    for query in checks {
+        let mut statement = db.prepare(query)?;
+        let mut rows = statement.query([])?;
+        while let Some(row) = rows.next()? {
+            let check: String = row.get(0)?;
+            if check != "ok" {
+                bail!("working copy failed SQLite quick_check: {check}");
+            }
+        }
     }
     Ok(db)
 }

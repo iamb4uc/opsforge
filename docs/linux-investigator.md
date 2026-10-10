@@ -285,9 +285,21 @@ are not inferred from stream representations or HTTP header lengths. An API call
 alone has no transfer outcome. Unknown schemas and malformed rows remain visible
 failures. The isolated working database gets an index for request correlation;
 the retained raw database is unchanged.
-Other application database schemas, mail/chat messages and attachment stores
-are not decoded by this discovery slice. Compressed log files are retained but
-are not decompressed yet. Log and history payloads can contain sensitive data.
+Thunderbird `global-messages-db.sqlite` schema 30 is discovered beneath normal,
+Flatpak and Snap profiles, or selected explicitly with `--import`. The database
+and available SQLite sidecars are preserved. An isolated copy checks the three
+stored tables used for metadata; a full database check requires Mozilla's
+`mozporter` tokenizer and is not performed. The stored text-content table supplies
+subject, author, recipients and the exact attachment-name string without loading
+that tokenizer. Message ID, folder URI, message key, ghost/deleted flags and
+nullable UNIX-microsecond message dates remain recorded index references.
+These rows do not prove network delivery, authentication, file availability or
+payload bytes. A Sent folder does not become an upload. Message bodies are not
+normalized; the retained raw index can contain them. Unsupported versions and
+malformed rows are explicit coverage gaps; valid rows already saved are retained.
+The format follows [Mozilla's datastore schema](https://github.com/mozilla/releases-comm-central/blob/19db1046848f4f7b3fd525111e18e89bc6ed90f6/mailnews/db/gloda/modules/GlodaDatastore.sys.mjs).
+Other application database schemas, mail/chat stores and attachment payloads
+remain undecoded. Log and history payloads can contain sensitive data.
 
 Discovery roots that are symbolic links are skipped explicitly; import their
 trusted targets to collect them. Credential/configuration files are outside
