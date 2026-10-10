@@ -301,6 +301,23 @@ The format follows [Mozilla's datastore schema](https://github.com/mozilla/relea
 Other application database schemas, mail/chat stores and attachment payloads
 remain undecoded. Log and history payloads can contain sensitive data.
 
+Scoped Thunderbird `Mail`/`ImapMail` artifacts beneath normal, Flatpak and Snap
+profiles are preserved: extensionless mailbox candidates, `.msf` summaries and
+per-message files under `cur`/`new`. An mbox envelope prefix is identified;
+unknown/empty mailbox candidates remain explicit. MIME payloads and mail-summary
+schemas are not decoded by this preservation step.
+Signal `sql/db.sqlite` under normal and Flatpak profiles is retained with
+available regular WAL/SHM/journal files; sidecar links are skipped explicitly.
+A standard SQLite header is distinguished from opaque bytes, which do not alone
+prove encryption. Message schemas and keys are not decoded or acquired.
+Every retained artifact has a raw hash and storage byte count, an observed
+collection-time record and an explicit unsupported decoding entry. These records
+do not become uploads/downloads. Live copies are not atomic. Configuration and
+key files remain outside automatic discovery. Additional message-store formats
+and attachment payload decoding remain coverage gaps.
+Storage references: [Thunderbird maildir/mbox](https://support.mozilla.org/en-US/kb/maildir-thunderbird),
+[Signal database setup](https://github.com/signalapp/Signal-Desktop/blob/78759bb74aa102cf5b51155a7143314c0fded2b7/ts/sql/Server.node.ts#L1043).
+
 Discovery roots that are symbolic links are skipped explicitly; import their
 trusted targets to collect them. Credential/configuration files are outside
 the log-name search. Live SQLite copies retain the same consistency limitation
