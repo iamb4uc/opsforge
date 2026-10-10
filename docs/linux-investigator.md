@@ -164,6 +164,18 @@ Supported retained sources:
   the investigated device. Ordinary gcloud `Copying` logs describe task starts,
   have no retained timezone and are leads without per-file completion. See
   [`gcloud storage cp --manifest-path`](https://docs.cloud.google.com/sdk/gcloud/reference/storage/cp#--manifest-path).
+- Azure CLI command metadata: recognized blob upload/download and batch commands
+  retain intent and matching process exit codes. Arguments are redacted by Azure;
+  filenames, endpoints, identities and bytes remain unknown. A successful command
+  is not treated as a completed file transfer. Existing console debug logs with
+  matching command context can retain urllib3 HTTP request targets and response
+  outcomes from the client perspective. These can be block/range/metadata requests;
+  response lengths do not establish consumed payload bytes. Interleaved console
+  commands discard context; process IDs separate metadata records. Command logs
+  lack a timezone; console logs lack timestamps. Discovery reads `.azure/commands`,
+  and custom configuration/log paths can be imported. Logging is not enabled by
+  collection. See [Azure CLI configuration](https://learn.microsoft.com/en-us/cli/azure/azure-cli-configuration)
+  and [command log implementation](https://github.com/Azure/azure-cli/blob/da4c0548a2725ea3d08b1d94b8e7fa1b0b07256e/src/azure-cli-core/azure/cli/core/azlogging.py#L128).
 - Standard FTP `xferlog`: file path, transferred bytes, peer, logged identity,
   incoming/outgoing direction and completion indicator. The source is a server;
   local timestamps lack a timezone, and spaces in file names become underscores.
