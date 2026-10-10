@@ -8,6 +8,130 @@ use std::{
     path::Path,
 };
 
+pub(crate) fn docker_logs(
+    case: &mut Case,
+    raw: &Path,
+    name: &str,
+    original: &Path,
+) -> Result<Option<u64>> {
+    let filename = original
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("");
+    let cli = filename.strip_prefix("docker-log-").and_then(|value| {
+        let (id, stream) = if let Some(id) = value.strip_suffix(".stderr.txt") {
+            (id, "CLI stderr capture")
+        } else {
+            (value.strip_suffix(".txt")?, "CLI stdout capture")
+        };
+        crate::collect::container_id(id).then_some((id, stream))
+    });
+    let exported_id = filename
+        .strip_suffix("-json.log")
+        .filter(|id| crate::collect::container_id(id));
+    let mut lines = BufReader::new(File::open(raw)?).lines().peekable();
+    let envelope = if cli.is_none() && exported_id.is_none() {
+        match lines.peek() {
+            Some(Ok(line)) => serde_json::from_str::<Value>(line).ok().is_some_and(|row| {
+                row.get("log").is_some() && row.get("stream").is_some() && row.get("time").is_some()
+            }),
+            Some(Err(_)) => return Err(lines.next().unwrap().unwrap_err().into()),
+            None => false,
+        }
+    } else {
+        true
+    };
+    if cli.is_none() && !envelope {
+        return Ok(None);
+    }
+    let evidence = format!("raw/{name}");
+    let mut count = 0;
+    for (index, line) in lines.enumerate() {
+        crate::runtime::check_cancelled()?;
+        let line = line?;
+        let line_number = index as u64 + 1;
+        let (time, stream, body_length, id) = if let Some((id, stream)) = cli {
+            let Some((time, body)) = line.split_once(' ') else {
+                gap(
+                    case,
+                    &evidence,
+                    &format!("line-{line_number}"),
+                    "Docker CLI diagnostic or unsupported line; retained raw, not a container event",
+                )?;
+                continue;
+            };
+            if time.parse::<jiff::Timestamp>().is_err() {
+                gap(
+                    case,
+                    &evidence,
+                    &format!("line-{line_number}"),
+                    "Docker CLI diagnostic or invalid timestamp; retained raw, not a container event",
+                )?;
+                continue;
+            }
+            (time.to_owned(), stream.to_owned(), body.len(), Some(id))
+        } else {
+            let row: Value = match serde_json::from_str(&line) {
+                Ok(row) => row,
+                Err(_) => {
+                    gap(
+                        case,
+                        &evidence,
+                        &format!("line-{line_number}"),
+                        "invalid Docker JSON envelope; line retained raw",
+                    )?;
+                    continue;
+                }
+            };
+            let (Some(time), Some(stream), Some(body)) = (
+                row["time"].as_str(),
+                row["stream"].as_str(),
+                row["log"].as_str(),
+            ) else {
+                gap(
+                    case,
+                    &evidence,
+                    &format!("line-{line_number}"),
+                    "unsupported Docker JSON envelope fields; line retained raw",
+                )?;
+                continue;
+            };
+            if !matches!(stream, "stdout" | "stderr") {
+                gap(
+                    case,
+                    &evidence,
+                    &format!("line-{line_number}"),
+                    "unknown Docker JSON stream; line retained raw",
+                )?;
+                continue;
+            }
+            (time.to_owned(), stream.to_owned(), body.len(), exported_id)
+        };
+        let timestamp = time
+            .parse::<jiff::Timestamp>()
+            .ok()
+            .map(|value| value.to_string());
+        if timestamp.is_none() {
+            gap(
+                case,
+                &evidence,
+                &format!("line-{line_number}"),
+                "invalid Docker runtime time; event time stays unknown",
+            )?;
+        }
+        case.event(&Event {
+            timestamp, source: "docker-log".into(), kind: "container-log-reference".into(),
+            application: Some("Docker (runtime log; application unknown)".into()),
+            user: None, destination: None,
+            detail: format!("{}\nRuntime log reference only. Body stays in raw evidence; its UTF-8 byte length is log text, not file/network bytes. Runtime time does not establish when an application action occurred. Container ID from filename is an unverified source label, not workload/process/user ownership. CLI stdout/stderr may include diagnostics or merged TTY streams; envelope stream is a runtime-reported label. No inbound/outbound activity, transfer, destination or application identity is inferred. Retention/rotation may omit history; embedded bodies are not recursively decoded.", json!({"container_source_label":id,"runtime_time":time,"stream_label":stream,"log_text_utf8_bytes":body_length})),
+            evidence: evidence.clone(), level: EvidenceLevel::Recorded, transfer: None,
+            evidence_line: Some(line_number),
+        })?;
+        count += 1;
+    }
+    Ok(Some(count))
+}
+
 pub(crate) fn openvpn_status(case: &mut Case, raw: &Path, name: &str) -> Result<Option<u64>> {
     let mut lines = BufReader::new(File::open(raw)?).lines();
     let Some(first) = lines.next().transpose()? else {

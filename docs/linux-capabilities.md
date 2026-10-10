@@ -138,6 +138,32 @@ malformed rows remain raw leads. Missing/rotated history cannot be reconstructed
 This is bounded EX-08 coverage; the full release gate remains pending. See the
 [Squid logformat documentation](https://www.squid-cache.org/Doc/config/logformat/).
 
+## Retained Docker logs
+
+Exfil/timeline collection queries only the rootful local socket
+`unix:///var/run/docker.sock`, regardless of the configured Docker context.
+An existing Docker CLI and accessible socket are optional dependencies; the
+collector does not install/start/reconfigure Docker. Full container IDs and
+only the logging-driver type are inspected. Logs are requested only for
+confirmed `json-file`, `local` or `journald` drivers; plugins/remote backends
+are skipped with a coverage gap. CLI stdout/stderr and command failures stay
+raw and hashed. No environment/full inspect dump is requested.
+
+`docker-log-<64-lowercase-hex-id>.txt` and `.stderr.txt` timestamped CLI
+exports, and offline JSON envelopes with `log`, `stream`, `time`, retain
+`container-log-reference` rows with source lines. Optional
+`<64-lowercase-hex-id>-json.log` filenames retain an unverified source label.
+Use stopped/offline exports for JSON imports; live engine log storage is
+not read by this collector. Log bodies/attributes remain raw, not normalized
+as transfers. Runtime times are not application action times; UTF-8 log text
+length is not file/network bytes. Container labels do not identify a
+process/user/application. TTY logs can merge streams and CLI diagnostics may
+appear in stderr. Rotation, deleted containers, remote/rootless/custom
+sockets, CRI/Podman and embedded application decoding remain explicit gaps.
+EX-08 remains pending complete validation. See the
+[Docker logs reference](https://docs.docker.com/reference/cli/docker/container/logs/)
+and [JSON driver guidance](https://docs.docker.com/engine/logging/drivers/json-file/).
+
 ## Dependency pins
 
 - AVML: `v0.20.0`, x86_64 `avml-minimal`, SHA-256
