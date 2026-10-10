@@ -157,6 +157,8 @@ fn run_case(case: &mut Case, config: &RunConfig, progress: &impl Fn(&str)) -> Re
                 crate::applications::inventory(case, name)
             })?;
         }
+        progress("Preserving retained local Docker logs");
+        source(case, "docker-local-logs", collect_docker_logs)?;
         progress("Collecting retained system journal");
         source(case, "journal", |case| collect_journal(case, progress))?;
         progress("Preserving retained system logs");
@@ -268,6 +270,104 @@ fn run_command(case: &mut Case, name: &str, program: &str, args: &[&str]) -> Res
         state,
         detail: format!("exit status: {status}"),
     })?;
+    Ok(())
+}
+
+pub(crate) fn container_id(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
+fn collect_docker_logs(case: &mut Case) -> Result<()> {
+    let socket = Path::new("/var/run/docker.sock");
+    if !command_exists("docker") || !socket.exists() {
+        case.coverage(&Coverage {
+            source: "docker-local-logs".into(),
+            state: CoverageState::Unavailable,
+            detail:
+                "local Docker CLI/socket unavailable; no remote context or engine storage fallback"
+                    .into(),
+        })?;
+        return Ok(());
+    }
+    let host = ["--host", "unix:///var/run/docker.sock"];
+    run_command(
+        case,
+        "docker-local-containers",
+        "docker",
+        &[
+            host[0],
+            host[1],
+            "ps",
+            "-a",
+            "--no-trunc",
+            "--format",
+            "{{.ID}}",
+        ],
+    )?;
+    for line in BufReader::new(File::open(
+        case.root.join("raw/docker-local-containers.txt"),
+    )?)
+    .lines()
+    {
+        runtime::check_cancelled()?;
+        let id = line?;
+        if !container_id(&id) {
+            case.coverage(&Coverage {
+                source: "docker-local-containers".into(),
+                state: CoverageState::Unsupported,
+                detail: "invalid container ID; not passed to Docker commands".into(),
+            })?;
+            continue;
+        }
+        source(case, &format!("docker-container-{id}"), |case| {
+            let driver_name = format!("docker-driver-{id}");
+            run_command(
+                case,
+                &driver_name,
+                "docker",
+                &[
+                    host[0],
+                    host[1],
+                    "inspect",
+                    "--format",
+                    "{{.HostConfig.LogConfig.Type}}",
+                    &id,
+                ],
+            )?;
+            let driver =
+                fs::read_to_string(case.root.join("raw").join(format!("{driver_name}.txt")))?;
+            if !matches!(driver.trim(), "json-file" | "local" | "journald") {
+                case.coverage(&Coverage {
+                    source: format!("docker-container-{id}"), state: CoverageState::Unsupported,
+                    detail: "logging driver not confirmed local; logs not requested from plugins/remote backends".into(),
+                })?;
+                return Ok(());
+            }
+            let name = format!("docker-log-{id}");
+            run_command(
+                case,
+                &name,
+                "docker",
+                &[host[0], host[1], "logs", "--timestamps", &id],
+            )?;
+            let mut count = 0;
+            for suffix in [".txt", ".stderr.txt"] {
+                let filename = format!("{name}{suffix}");
+                let path = case.root.join("raw").join(&filename);
+                count += crate::exports::docker_logs(case, &path, &filename, Path::new(&filename))?
+                    .unwrap_or(0);
+            }
+            case.coverage(&Coverage {
+                source: format!("docker-runtime-records-{id}"),
+                state: if count == 0 { CoverageState::Empty } else { CoverageState::Collected },
+                detail: format!("{count} runtime references from CLI captures; command/decoder errors retain separate coverage"),
+            })?;
+            Ok(())
+        })?;
+    }
     Ok(())
 }
 
@@ -690,6 +790,9 @@ pub(crate) fn normalize_text_log(
         }
         return Ok(count);
     }
+    if let Some(count) = crate::exports::docker_logs(case, raw, name, original)? {
+        return Ok(count);
+    }
     if let Some(count) = crate::exports::slack(case, raw, name, original)? {
         return Ok(count);
     }
@@ -975,6 +1078,26 @@ fn normalize_pcap(case: &mut Case, pcap: &Path) -> Result<()> {
         detail: format!("{count} packet summaries; {status}"),
     })?;
     Ok(())
+}
+
+#[cfg(test)]
+mod docker_tests {
+    #[test]
+    fn only_full_lowercase_container_ids_reach_cli_arguments() {
+        assert!(super::container_id(&"a".repeat(64)));
+        assert!(super::container_id(&"0".repeat(64)));
+        for id in [
+            "a".repeat(63),
+            "a".repeat(65),
+            "A".repeat(64),
+            "z".repeat(64),
+            "--help".into(),
+            "../fixture".into(),
+            format!("{}\n", "a".repeat(64)),
+        ] {
+            assert!(!super::container_id(&id));
+        }
+    }
 }
 
 #[cfg(test)]
