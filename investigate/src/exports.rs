@@ -1,7 +1,163 @@
 use crate::case::{Case, Coverage, CoverageState, Event, EvidenceLevel};
 use anyhow::Result;
 use serde_json::{Value, json};
-use std::{fs::File, io::BufReader, path::Path};
+use std::{
+    collections::BTreeMap,
+    fs::File,
+    io::{BufRead, BufReader},
+    path::Path,
+};
+
+pub(crate) fn openvpn_status(case: &mut Case, raw: &Path, name: &str) -> Result<Option<u64>> {
+    let mut lines = BufReader::new(File::open(raw)?).lines();
+    let Some(first) = lines.next().transpose()? else {
+        return Ok(None);
+    };
+    let version_one = first == "OpenVPN CLIENT LIST";
+    let separator = if first.starts_with("TITLE\tOpenVPN ") {
+        '\t'
+    } else {
+        ','
+    };
+    if !version_one && !first.starts_with("TITLE,OpenVPN ") && !first.starts_with("TITLE\tOpenVPN ")
+    {
+        return Ok(None);
+    }
+    let evidence = format!("raw/{name}");
+    let mut timestamp = None;
+    let mut headers: Vec<String> = Vec::new();
+    let mut active = false;
+    let mut ended = false;
+    let mut count = 0;
+    for (index, line) in lines.enumerate() {
+        crate::runtime::check_cancelled()?;
+        let line = line?;
+        let line_number = index as u64 + 2;
+        if line == "END" {
+            ended = true;
+            active = false;
+            continue;
+        }
+        if line == "ROUTING TABLE" {
+            active = false;
+            continue;
+        }
+        let fields: Vec<_> = line.split(separator).collect();
+        if !version_one && fields.first() == Some(&"TIME") {
+            timestamp = fields
+                .get(2)
+                .filter(|value| {
+                    !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())
+                })
+                .and_then(|value| value.parse::<i64>().ok())
+                .and_then(|value| jiff::Timestamp::from_second(value).ok())
+                .map(|value| value.to_string());
+            if timestamp.is_none() {
+                gap(
+                    case,
+                    &evidence,
+                    &format!("line-{line_number}"),
+                    "invalid OpenVPN status UNIX snapshot time; local text time is not substituted",
+                )?;
+            }
+            continue;
+        }
+        let header = if fields.first() == Some(&"HEADER") && fields.get(1) == Some(&"CLIENT_LIST") {
+            Some(&fields[2..])
+        } else if version_one && fields.first() == Some(&"Common Name") {
+            Some(fields.as_slice())
+        } else {
+            None
+        };
+        if let Some(header) = header {
+            headers = header.iter().map(|value| (*value).to_owned()).collect();
+            let unique: std::collections::BTreeSet<_> = headers.iter().collect();
+            active = [
+                "Common Name",
+                "Real Address",
+                "Bytes Received",
+                "Bytes Sent",
+                "Connected Since",
+            ]
+            .iter()
+            .all(|required| headers.iter().any(|header| header == required))
+                && unique.len() == headers.len();
+            if !active {
+                gap(
+                    case,
+                    &evidence,
+                    &format!("line-{line_number}"),
+                    "unsupported OpenVPN client status header; required or unique columns missing",
+                )?;
+            }
+            continue;
+        }
+        let row = if !version_one && fields.first() == Some(&"CLIENT_LIST") {
+            Some(&fields[1..])
+        } else if version_one && active {
+            Some(fields.as_slice())
+        } else {
+            None
+        };
+        let Some(row) = row else { continue };
+        if !active || row.len() != headers.len() {
+            gap(
+                case,
+                &evidence,
+                &format!("line-{line_number}"),
+                "unsupported OpenVPN client row; missing header or field count mismatch, ambiguous delimiters remain raw",
+            )?;
+            continue;
+        }
+        let metadata: BTreeMap<_, _> = headers
+            .iter()
+            .map(String::as_str)
+            .zip(row.iter().copied())
+            .collect();
+        let counter = |field| {
+            metadata
+                .get(field)
+                .filter(|value| {
+                    !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())
+                })
+                .and_then(|value| value.parse::<u64>().ok())
+        };
+        let received = counter("Bytes Received");
+        let sent = counter("Bytes Sent");
+        if received.is_none() || sent.is_none() {
+            gap(
+                case,
+                &evidence,
+                &format!("line-{line_number}"),
+                "invalid OpenVPN cumulative counters; values remain raw metadata, not zero or estimated bytes",
+            )?;
+        }
+        case.event(&Event {
+            timestamp: timestamp.clone(), source: "openvpn-status".into(), kind: "vpn-session-snapshot".into(),
+            application: Some("OpenVPN (server status)".into()), user: None, destination: None,
+            detail: format!("{}\nServer-reported session snapshot. Receive/send counters are cumulative OpenVPN link counters from the server perspective, not file sizes, file payload, complete wire-frame bytes or exfiltration totals. Do not sum repeated snapshots or infer transfers, client processes or verified identities from common-name/username labels. Snapshot time comes only from retained UNIX TIME; offsetless Updated/Connected Since text remains source-local metadata. Status files may be overwritten and do not reconstruct missing history.", serde_json::json!({"source_fields":metadata,"received_link_bytes":received,"sent_link_bytes":sent})),
+            evidence: evidence.clone(), level: EvidenceLevel::Recorded, transfer: None, evidence_line: Some(line_number),
+        })?;
+        count += 1;
+    }
+    if !ended {
+        gap(
+            case,
+            &evidence,
+            "end",
+            "OpenVPN status END marker missing; retained rows are an incomplete snapshot",
+        )?;
+    }
+    if headers.is_empty() {
+        gap(
+            case,
+            &evidence,
+            "header",
+            "OpenVPN status client header missing; no client rows decoded",
+        )?;
+    }
+    Ok(Some(count))
+}
 
 pub(crate) fn slack(
     case: &mut Case,

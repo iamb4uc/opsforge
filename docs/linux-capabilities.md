@@ -75,6 +75,28 @@ remain raw leads; absent logging cannot reconstruct past DNS activity. See the
 This is a bounded EX-08 implementation, not completion of VPN, proxy, firewall
 or container history coverage or the full release gate.
 
+## Retained OpenVPN status
+
+Server status versions 1 (comma), 2 (comma) and 3 (tab) retain individual
+`vpn-session-snapshot` records in Network/Timeline/Applications. Runtime files
+under `/run/openvpn`, `/run/openvpn-server` and `/run/openvpn-client` are checked
+when exfiltration or timeline collection is selected; `/var/log` discovery and
+explicit imports cover other destinations. No VPN connection is opened by
+collection. Custom paths require an import.
+
+Receive/send counters keep the server perspective and cumulative OpenVPN link
+byte basis. They are not file payload, whole network frames or exfiltration
+totals, and repeated snapshots must not be summed. Client labels/addresses do
+not establish application/process/user ownership. Only version 2/3 UNIX `TIME`
+sets snapshot UTC time; version 1 and offsetless local dates remain unknown.
+Unknown columns remain source metadata. Missing markers, malformed headers,
+ambiguous delimiters and invalid counters get explicit coverage gaps while raw
+data and valid rows survive. Status files are usually overwritten; they do not
+reconstruct prior sessions. Point-to-point/client statistics, session logs,
+management streams and other VPN providers remain raw leads. EX-08 remains
+pending complete validation. See the
+[OpenVPN manual](https://build.openvpn.net/man/openvpn-2.6/openvpn.8.html).
+
 ## Dependency pins
 
 - AVML: `v0.20.0`, x86_64 `avml-minimal`, SHA-256
