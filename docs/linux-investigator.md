@@ -318,6 +318,25 @@ and attachment payload decoding remain coverage gaps.
 Storage references: [Thunderbird maildir/mbox](https://support.mozilla.org/en-US/kb/maildir-thunderbird),
 [Signal database setup](https://github.com/signalapp/Signal-Desktop/blob/78759bb74aa102cf5b51155a7143314c0fded2b7/ts/sql/Server.node.ts#L1043).
 
+Extracted Slack JSON exports can be selected with `--import PATH`. Dated
+conversation JSON files are recognized beneath an export with regular
+`channels.json` and `users.json` (or `org_users.json`) reference files. Message
+and file-reference records keep source IDs, subtype/edit/thread metadata and
+exact UNIX-fractional UTC timestamps. Missing/invalid times stay unknown;
+export filenames are not used as event times. JSON pointers locate records in
+the preserved original. Malformed rows and unsupported schemas are coverage
+gaps; valid records remain available. Each daily JSON array is read in memory;
+events are written individually. Extract ZIP archives before importing.
+File names, MIME types and sizes are exported metadata; shares do not establish
+uploads, downloads, receipt or activity on this device. Private URLs, message
+bodies and prior text remain raw and are never fetched. Source user/channel IDs
+are not verified identities or destinations. Empty exports and retention gaps
+do not prove absent activity. Nested prior/message content and rich attachments
+have explicit unsupported decoding records. TXT/canvas/other export schemas
+are not decoded.
+The reader follows Slack's [export guide](https://slack.com/help/articles/220556107-How-to-read-Slack-data-exports)
+and [file object reference](https://docs.slack.dev/reference/objects/file-object/).
+
 Discovery roots that are symbolic links are skipped explicitly; import their
 trusted targets to collect them. Credential/configuration files are outside
 the log-name search. Live SQLite copies retain the same consistency limitation
