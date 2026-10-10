@@ -393,6 +393,15 @@ fn collect_journal(case: &mut Case, progress: &impl Fn(&str)) -> Result<()> {
             parsed.timestamp = event.timestamp.clone();
             parsed.evidence_line = event.evidence_line;
             case.event(&parsed)?;
+        } else if let Some(mut parsed) = crate::transfers::dnsmasq_event(
+            message,
+            Some(record.get("_COMM").and_then(Value::as_str).unwrap_or("")),
+            "journal",
+            "raw/journal.jsonl",
+        ) {
+            parsed.timestamp = event.timestamp.clone();
+            parsed.evidence_line = event.evidence_line;
+            case.event(&parsed)?;
         } else {
             case.event(&event)?;
         }
