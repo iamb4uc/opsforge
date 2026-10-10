@@ -7,7 +7,7 @@ use anyhow::Result;
 use std::{
     collections::BTreeSet,
     fs::File,
-    io::{BufRead, BufReader},
+    io::{BufRead, BufReader, Read},
     path::Path,
 };
 use walkdir::WalkDir;
@@ -42,6 +42,8 @@ const LOCATIONS: &[(&str, &str)] = &[
     ("Discord", ".config/discord/logs"),
     ("Element", ".config/Element/logs"),
     ("Signal", ".config/Signal/logs"),
+    ("Signal", ".config/Signal/sql"),
+    ("Signal", ".var/app/org.signal.Signal/config/Signal/sql"),
     ("curl", "curl.log"),
     ("wget", "wget-log"),
 ];
@@ -168,10 +170,11 @@ fn collect_home(
                 }
             };
             let path = entry.path();
+            let artifact = message_artifact_kind(application, path.strip_prefix(&location)?);
             let manifest = *application == "gcloud"
                 && path.extension().is_some_and(|extension| extension == "csv");
             if !entry.file_type().is_file()
-                || (!is_log(path) && !manifest)
+                || (!is_log(path) && !manifest && artifact.is_none())
                 || !seen.insert(path.to_owned())
             {
                 continue;
@@ -184,6 +187,8 @@ fn collect_home(
             ));
             let parsed = if is_thunderbird_index(path) {
                 thunderbird_index(case, path, &name)
+            } else if let Some(kind) = artifact {
+                preserve_message_artifact(case, path, &name, application, kind)
             } else if *application == "AWS CLI"
                 && path.file_name().is_some_and(|name| name == "history.db")
             {
@@ -218,11 +223,106 @@ fn collect_home(
                 }
             }
         }
-        case.coverage(&Coverage { source, state: if failed > 0 { CoverageState::Failed } else if count == 0 { CoverageState::Empty } else { CoverageState::Collected }, detail: format!("{count} files parsed; {failed} failed; recognized logs and Thunderbird search indexes only; credentials/configuration and other message stores are not parsed") })?;
+        case.coverage(&Coverage { source, state: if failed > 0 { CoverageState::Failed } else if count == 0 { CoverageState::Empty } else { CoverageState::Collected }, detail: format!("{count} sources collected; {failed} failed; recognized logs, search indexes and scoped message artifacts only; inspect decoding coverage; credentials/configuration excluded") })?;
         parsed_files += count;
         errors += failed;
     }
     Ok((attempted, parsed_files, errors))
+}
+
+fn message_artifact_kind(application: &str, relative: &Path) -> Option<&'static str> {
+    if application == "Signal" && relative == Path::new("db.sqlite") {
+        return Some("signal-database");
+    }
+    if application != "Thunderbird"
+        || !relative
+            .components()
+            .any(|component| matches!(component.as_os_str().to_str(), Some("Mail" | "ImapMail")))
+    {
+        return None;
+    }
+    if relative
+        .extension()
+        .is_some_and(|extension| extension == "msf")
+    {
+        Some("mail-summary")
+    } else if relative
+        .parent()
+        .and_then(Path::file_name)
+        .is_some_and(|name| name == "cur" || name == "new")
+    {
+        Some("maildir-message")
+    } else if relative.extension().is_none() {
+        Some("mailbox-candidate")
+    } else {
+        None
+    }
+}
+
+fn preserve_message_artifact(
+    case: &mut Case,
+    path: &Path,
+    name: &str,
+    application: &str,
+    kind: &str,
+) -> Result<u64> {
+    let raw = case.copy_evidence(path, name)?;
+    let mut header = [0_u8; 16];
+    let length = File::open(&raw)?.read(&mut header)?;
+    let format = match kind {
+        "signal-database" if length == 16 && header == *b"SQLite format 3\0" => {
+            "SQLite header recognized; Signal schema is not decoded"
+        }
+        "signal-database" => {
+            "opaque Signal database; SQLCipher encryption is expected, but encryption is not established by the header alone"
+        }
+        "mailbox-candidate" if length >= 5 && &header[..5] == b"From " => {
+            "mbox envelope prefix recognized; MIME and attachment payloads are not decoded"
+        }
+        "mailbox-candidate" if length == 0 => {
+            "empty mailbox candidate; no message content retained"
+        }
+        "mailbox-candidate" => "unrecognized mailbox candidate; message format is not established",
+        "maildir-message" => {
+            "maildir message candidate from its storage location; MIME and attachment payloads are not decoded"
+        }
+        _ => "mail summary artifact; summary schema is not decoded",
+    };
+    if kind == "signal-database" {
+        for suffix in ["-wal", "-shm", "-journal"] {
+            let sidecar = path.with_file_name(format!(
+                "{}{}",
+                path.file_name().unwrap_or_default().to_string_lossy(),
+                suffix
+            ));
+            match std::fs::symlink_metadata(&sidecar) {
+                Ok(metadata) if metadata.is_file() => {
+                    case.copy_evidence(&sidecar, &format!("{name}{suffix}"))?;
+                }
+                Ok(_) => case.coverage(&Coverage {
+                    source: sidecar.display().to_string(),
+                    state: CoverageState::Unsupported,
+                    detail: "sidecar is not a regular file; not followed".into(),
+                })?,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+    }
+    case.coverage(&Coverage {
+        source: format!("{}:decoding", path.display()),
+        state: CoverageState::Unsupported,
+        detail: format!("{format}; raw content retained; no key acquisition or decryption"),
+    })?;
+    case.event(&Event {
+        timestamp: Some(jiff::Timestamp::now().to_string()), source: "message-artifact".into(),
+        kind: "message-store-artifact".into(), application: Some(application.into()),
+        user: None, destination: None,
+        detail: format!("Source artifact: {}. {format}. Collection-time artifact observation, not message or transfer time. Storage bytes and hashes are in the raw manifest; they are not network payload counts. Current folder/location does not prove delivery or authentication. Live file copies are not an atomic snapshot.", path.display()),
+        evidence: format!("raw/{name}"), level: EvidenceLevel::Observed,
+        transfer: None, evidence_line: None,
+    })?;
+    Ok(1)
 }
 
 fn is_log(path: &Path) -> bool {
@@ -620,6 +720,68 @@ mod tests {
                 .count(),
             3
         );
+        drop(case);
+        std::fs::remove_dir_all(base).expect("fixture cleanup");
+    }
+
+    #[test]
+    fn message_artifacts_preserve_stores_and_gaps_without_following_sidecar_links() {
+        use std::os::unix::fs::symlink;
+        let base =
+            std::env::temp_dir().join(format!("opsforge-message-artifacts-{}", std::process::id()));
+        let home = base.join("home");
+        let mail = home.join(".thunderbird/profile/Mail/Local Folders");
+        let signal = home.join(".config/Signal/sql");
+        std::fs::create_dir_all(&mail).expect("mail");
+        std::fs::create_dir_all(&signal).expect("signal");
+        std::fs::write(
+            mail.join("Inbox"),
+            "From sender Fri Oct 9 12:30:00 2026\nSubject: retained mail\n\nbody\n",
+        )
+        .expect("mbox");
+        std::fs::write(mail.join("Inbox.msf"), "summary bytes").expect("summary");
+        std::fs::write(mail.join("Trash"), "").expect("empty");
+        std::fs::write(
+            home.join(".thunderbird/profile/prefs.js"),
+            "private configuration",
+        )
+        .expect("prefs");
+        std::fs::write(signal.join("db.sqlite"), [0xA5; 64]).expect("opaque store");
+        let secret = home.join(".config/Signal/config.json");
+        std::fs::write(&secret, "private key configuration").expect("config");
+        symlink(&secret, signal.join("db.sqlite-wal")).expect("sidecar link");
+        let mut case = crate::case::Case::new(&base.join("cases")).expect("case");
+        assert_eq!(
+            super::collect_home(&mut case, "operator", &home, 0, &|_| {}).expect("collection"),
+            (4, 4, 0)
+        );
+        let events: Vec<serde_json::Value> =
+            std::fs::read_to_string(case.root.join("normalized/events.jsonl"))
+                .expect("events")
+                .lines()
+                .map(|line| serde_json::from_str(line).expect("event"))
+                .collect();
+        assert_eq!(events.len(), 4);
+        assert!(
+            events
+                .iter()
+                .all(|event| event["transfer"].is_null() && event["user"].is_null())
+        );
+        let raw: Vec<_> = std::fs::read_dir(case.root.join("raw"))
+            .expect("raw")
+            .map(|entry| std::fs::read(entry.expect("entry").path()).expect("bytes"))
+            .collect();
+        assert_eq!(raw.len(), 4);
+        assert!(raw.contains(&vec![0xA5; 64]));
+        assert!(!raw.iter().any(|bytes| bytes.starts_with(b"private")));
+        let coverage =
+            std::fs::read_to_string(case.root.join("normalized/coverage.jsonl")).expect("coverage");
+        assert!(coverage.contains("sidecar is not a regular file; not followed"));
+        assert!(
+            coverage.contains("empty mailbox candidate")
+                && coverage.contains("SQLCipher encryption is expected")
+        );
+        assert_eq!(coverage.matches(":decoding\"").count(), 4);
         drop(case);
         std::fs::remove_dir_all(base).expect("fixture cleanup");
     }
