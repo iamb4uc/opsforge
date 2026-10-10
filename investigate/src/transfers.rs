@@ -78,6 +78,91 @@ pub fn dnsmasq_event(line: &str, logger: Option<&str>, source: &str, raw: &str) 
     })
 }
 
+pub fn firewall_event(line: &str, logger: Option<&str>, source: &str, raw: &str) -> Option<Event> {
+    let message = match logger {
+        Some("kernel") => line,
+        Some(_) => return None,
+        None => {
+            let (prefix, message) = line.split_once(": ")?;
+            if prefix.split_whitespace().last()? != "kernel" {
+                return None;
+            }
+            message
+        }
+    };
+    let mut fields: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for word in message
+        .split_whitespace()
+        .skip_while(|word| !word.starts_with("IN="))
+    {
+        if let Some((key, value)) = word.split_once('=') {
+            fields.entry(key).or_default().push(value);
+        }
+    }
+    for key in ["IN", "OUT", "SRC", "DST", "PROTO"] {
+        if fields.get(key)?.len() != 1 {
+            return None;
+        }
+    }
+    fields["SRC"][0].parse::<std::net::IpAddr>().ok()?;
+    fields["DST"][0].parse::<std::net::IpAddr>().ok()?;
+    if fields["PROTO"][0].is_empty() {
+        return None;
+    }
+    let lengths = fields.get("LEN")?;
+    let decimal = |text: &str| {
+        (!text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit()))
+            .then(|| text.parse::<u64>().ok())
+            .flatten()
+    };
+    let ip_length = decimal(lengths.first()?)?;
+    let udp = matches!(fields["PROTO"][0], "UDP" | "UDPLITE");
+    if lengths.len() > if udp { 2 } else { 1 } {
+        return None;
+    }
+    let datagram_length = if udp {
+        lengths.get(1).and_then(|value| decimal(value))
+    } else {
+        None
+    };
+    Some(Event {
+        timestamp: leading_timestamp(line),
+        source: source.into(),
+        kind: "firewall-packet".into(),
+        application: Some("kernel packet logger (client application unknown)".into()),
+        user: None,
+        destination: None,
+        detail: format!(
+            "{}\nKernel-reported packet log. First LEN is the logged IP packet length including its IP header; a second UDP/UDPLITE LEN is the datagram length including its header. Neither is file payload, complete link-layer wire bytes or an exfiltration total. Repeated field values are preserved in source order. IN/OUT are logged interface labels, not verified end-to-end direction or process ownership. LOG is non-terminating: final accept/drop, delivery, retransmission identity and NAT/end-peer context are unknown; a custom prefix is not a verified verdict. Logged UID, when present, is source metadata rather than an authenticated user. No transfers or files are inferred. Original header/flag text: {message}",
+            serde_json::json!({"source_fields":fields,"logged_ip_packet_bytes":ip_length,"logged_udp_datagram_bytes":datagram_length})
+        ),
+        evidence: raw.into(),
+        level: EvidenceLevel::Recorded,
+        transfer: None,
+        evidence_line: None,
+    })
+}
+
+pub fn firewall_journal_event(record: &Value, source: &str, raw: &str) -> Option<Event> {
+    if record.get("_TRANSPORT").and_then(Value::as_str) != Some("kernel") {
+        return None;
+    }
+    let mut event = firewall_event(
+        record.get("MESSAGE")?.as_str()?,
+        Some("kernel"),
+        source,
+        raw,
+    )?;
+    event.timestamp = record
+        .get("__REALTIME_TIMESTAMP")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()))
+        .and_then(|value| value.parse::<i64>().ok())
+        .and_then(|value| jiff::Timestamp::from_microsecond(value).ok())
+        .map(|value| value.to_string());
+    Some(event)
+}
+
 fn gcloud_copy_event(line: &str, source: &str, raw: &str) -> Option<Event> {
     let stamp = line.get(..23)?.replace(' ', "T").replace(',', ".");
     stamp.parse::<jiff::civil::DateTime>().ok()?;
@@ -646,6 +731,9 @@ impl Parser {
     }
 
     pub fn parse(&mut self, line: &str, source: &str, raw: &str) -> Option<Event> {
+        if let Some(event) = firewall_event(line, None, source, raw) {
+            return Some(event);
+        }
         if let Some(event) = dnsmasq_event(line, None, source, raw) {
             return Some(event);
         }
@@ -681,6 +769,9 @@ impl Parser {
             evidence_line: None,
         };
         if let Ok(record) = serde_json::from_str::<Value>(line) {
+            if let Some(event) = firewall_journal_event(&record, source, raw) {
+                return Some(event);
+            }
             if syncthing_record(&record, &mut event).is_some() {
                 return Some(event);
             }

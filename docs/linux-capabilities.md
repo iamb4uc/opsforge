@@ -97,6 +97,27 @@ management streams and other VPN providers remain raw leads. EX-08 remains
 pending complete validation. See the
 [OpenVPN manual](https://build.openvpn.net/man/openvpn-2.6/openvpn.8.html).
 
+## Retained kernel packet logs
+
+Netfilter-style packet records with `kernel:` syslog tags or journal
+`_TRANSPORT=kernel` markers retain `firewall-packet` events. Original source
+lines, interface/address/header fields and repeated values stay linked to raw
+evidence. Journal JSONL imports and normal journal collection share the same
+reader. Explicit UTC/offset times are retained; yearless syslog and monotonic
+kernel times are not guessed into wall-clock time.
+
+The first `LEN` is IP packet length, including the IP header; a second UDP or
+UDPLITE `LEN` is its datagram length, including its header. These are not file
+payload, full link-layer frame bytes or exfiltration totals. No packet counts
+are converted into file transfers or byte totals. LOG is non-terminating, so
+the final verdict/delivery remains unknown even when a custom prefix says
+BLOCK. Logged UID/interface labels do not identify the client process or
+verified user. Ambiguous nested packets/duplicate address fields and unknown
+logger formats stay raw leads. Unprefixed dmesg, NFLOG/ULOG and vendor firewall
+formats are not decoded by this reader. EX-08 remains pending complete gates.
+See the [Netfilter LOG documentation](https://ipset.netfilter.org/iptables-extensions.man.html)
+and [kernel logger source](https://github.com/torvalds/linux/blob/v6.8/net/netfilter/nf_log_syslog.c).
+
 ## Dependency pins
 
 - AVML: `v0.20.0`, x86_64 `avml-minimal`, SHA-256

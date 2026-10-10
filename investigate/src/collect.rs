@@ -411,6 +411,11 @@ fn collect_journal(case: &mut Case, progress: &impl Fn(&str)) -> Result<()> {
             parsed.timestamp = event.timestamp.clone();
             parsed.evidence_line = event.evidence_line;
             case.event(&parsed)?;
+        } else if let Some(mut parsed) =
+            crate::transfers::firewall_journal_event(&record, "journal", "raw/journal.jsonl")
+        {
+            parsed.evidence_line = event.evidence_line;
+            case.event(&parsed)?;
         } else {
             case.event(&event)?;
         }
