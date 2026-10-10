@@ -10,6 +10,32 @@ pub(crate) fn leading_timestamp(line: &str) -> Option<String> {
         .map(|time| time.to_string())
 }
 
+fn gcloud_copy_event(line: &str, source: &str, raw: &str) -> Option<Event> {
+    let stamp = line.get(..23)?.replace(' ', "T").replace(',', ".");
+    stamp.parse::<jiff::civil::DateTime>().ok()?;
+    let rest = line.get(23..)?.trim_start().strip_prefix("INFO ")?;
+    let rest = rest.trim_start().strip_prefix("___FILE_ONLY___ ")?;
+    let message = rest.trim_start().strip_prefix("Copying ")?;
+    if message.is_empty() {
+        return None;
+    }
+    Some(Event {
+        timestamp: Some(stamp),
+        source: source.into(),
+        kind: "cloud-copy-start".into(),
+        application: Some("gcloud".into()),
+        user: None,
+        destination: None,
+        detail: format!(
+            "{line}\nCopy task initialization only; no completion or transferred bytes established. Paths remain in the original message because names can contain the delimiter. Local and cloud-to-cloud copies use this message too. Log timestamp has no retained timezone."
+        ),
+        evidence: raw.into(),
+        level: EvidenceLevel::Lead,
+        transfer: None,
+        evidence_line: None,
+    })
+}
+
 fn nextcloud_event(line: &str, source: &str, raw: &str) -> Option<Event> {
     let (stamp, rest) = line.split_once(" [ ")?;
     let (context, message) = rest.split_once(" ]:\t")?;
@@ -552,6 +578,9 @@ impl Parser {
     }
 
     pub fn parse(&mut self, line: &str, source: &str, raw: &str) -> Option<Event> {
+        if let Some(event) = gcloud_copy_event(line, source, raw) {
+            return Some(event);
+        }
         if let Some(event) = self.azure_event(line, source, raw) {
             return Some(event);
         }
@@ -1312,6 +1341,19 @@ mod tests {
 
     use super::{Parser, har_events};
     use serde_json::json;
+
+    #[test]
+    fn gcloud_copy_initialization_is_a_lead_even_when_both_paths_are_local() {
+        let line = "2026-10-10 05:35:56,007 INFO     ___FILE_ONLY___ Copying file:///local/name to other.txt to file:///local/destination.txt";
+        let event = super::gcloud_copy_event(line, "import", "raw/gcloud").expect("copy task");
+        assert_eq!(event.kind, "cloud-copy-start");
+        assert!(event.transfer.is_none() && event.destination.is_none());
+        assert_eq!(event.timestamp.as_deref(), Some("2026-10-10T05:35:56.007"));
+        assert!(
+            super::gcloud_copy_event(&line.replace("INFO", "ERROR"), "import", "raw/gcloud")
+                .is_none()
+        );
+    }
 
     #[test]
     fn azure_command_results_do_not_claim_file_completion_and_debug_requires_context() {

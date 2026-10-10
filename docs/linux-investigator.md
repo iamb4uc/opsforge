@@ -150,6 +150,20 @@ to an investigated FTP/HTTP server is not an outbound exfiltration event.
 
 Supported retained sources:
 
+- Cloud Storage transfer manifests: exact gcloud/gsutil CSV headers retain source
+  and target URIs, client-reported `OK`, `error` and `skip` results, and successful
+  copy progress bytes. Error/skip zero counters are sentinels; actual bytes stay
+  unknown. Source size is kept separately in the original record. Device upload
+  and download direction requires a local `file:///` side and a `gs://` object
+  side; local and cloud-to-cloud copies remain separate leads. Peer and identity
+  remain unknown, and the shared header does not establish which executable
+  produced it. Quoted commas, quotes and multiline names retain the first raw
+  line reference. Broken CSV is reported failed with the original file retained.
+  CSV files in `.config/gcloud/logs` are discovered; import custom manifest paths
+  with `--import`. Collection does not create manifests on
+  the investigated device. Ordinary gcloud `Copying` logs describe task starts,
+  have no retained timezone and are leads without per-file completion. See
+  [`gcloud storage cp --manifest-path`](https://docs.cloud.google.com/sdk/gcloud/reference/storage/cp#--manifest-path).
 - Azure CLI command metadata: recognized blob upload/download and batch commands
   retain intent and matching process exit codes. Arguments are redacted by Azure;
   filenames, endpoints, identities and bytes remain unknown. A successful command

@@ -667,6 +667,9 @@ pub(crate) fn normalize_text_log(
         }
         return Ok(count);
     }
+    if let Some(count) = crate::applications::gcloud_manifest(case, raw, name, source)? {
+        return Ok(count);
+    }
     let mut count = 0_u64;
     let mut parser = crate::transfers::Parser::default();
     for line in BufReader::new(File::open(raw)?).lines() {
