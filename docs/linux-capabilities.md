@@ -57,6 +57,24 @@ the Windows investigator is a later expansion.
 | RT-01 | private output and trusted elevated code | symlink/path attacks, no overwrite, no untrusted shell code, no execution of evidence | pending |
 | RT-02 | partial-case handling | failed child, interruption, full disk, readable incomplete status | pending |
 
+## Retained DNS records
+
+The dnsmasq reader retains basic and `--log-queries=extra` query, forwarded,
+reply and cache records from imported/discovered text logs and trusted journal
+`_COMM=dnsmasq` messages. Network and timeline pages include these records.
+Each record keeps its source line; serial/requester fields belong only to that
+record. Reply values include negative/error responses and remain source text.
+The resolver is the logging application, not the client's process or user.
+There is no inferred upload/download, file, byte count or exfiltration verdict.
+Yearless/offsetless syslog timestamps remain unknown; journal UTC timestamps
+and explicit-offset plaintext timestamps are retained. No cross-record joins
+are attempted. `proto`, DHCP, DNSSEC diagnostics, cache dumps and other formats
+remain raw leads; absent logging cannot reconstruct past DNS activity. See the
+[dnsmasq manual](https://thekelleys.org.uk/dnsmasq/docs/dnsmasq-man.html).
+
+This is a bounded EX-08 implementation, not completion of VPN, proxy, firewall
+or container history coverage or the full release gate.
+
 ## Dependency pins
 
 - AVML: `v0.20.0`, x86_64 `avml-minimal`, SHA-256

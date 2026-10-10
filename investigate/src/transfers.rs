@@ -10,6 +10,74 @@ pub(crate) fn leading_timestamp(line: &str) -> Option<String> {
         .map(|time| time.to_string())
 }
 
+pub fn dnsmasq_event(line: &str, logger: Option<&str>, source: &str, raw: &str) -> Option<Event> {
+    if logger.is_some_and(|logger| logger != "dnsmasq") {
+        return None;
+    }
+    let message = if logger == Some("dnsmasq") {
+        line
+    } else {
+        let (prefix, message) = line.split_once(": ")?;
+        let tag = prefix.split_whitespace().last()?;
+        if tag != "dnsmasq" {
+            let pid = tag.strip_prefix("dnsmasq[")?.strip_suffix(']')?;
+            if pid.is_empty() || !pid.bytes().all(|byte| byte.is_ascii_digit()) {
+                return None;
+            }
+        }
+        message
+    };
+    let mut words = message.split_whitespace();
+    let first = words.next()?;
+    let (action, serial, requester) = if first.bytes().all(|byte| byte.is_ascii_digit()) {
+        let client = words.next()?;
+        let (ip, port) = client.rsplit_once('/')?;
+        ip.parse::<std::net::IpAddr>().ok()?;
+        port.parse::<u16>().ok()?;
+        (words.next()?, Some(first), Some(client))
+    } else {
+        (first, None, None)
+    };
+    let name = words.next()?;
+    let relation = words.next()?;
+    let value = words.collect::<Vec<_>>().join(" ");
+    if value.is_empty() {
+        return None;
+    }
+    let kind = match action {
+        "forwarded" if relation == "to" => "dns-forwarded",
+        "reply" if relation == "is" => "dns-reply",
+        "cached" if relation == "is" => "dns-cached",
+        _ if relation == "from"
+            && action
+                .strip_prefix("query[")
+                .and_then(|text| text.strip_suffix(']'))
+                .is_some_and(|record_type| !record_type.is_empty())
+            && value.parse::<std::net::IpAddr>().is_ok() =>
+        {
+            "dns-query"
+        }
+        _ => return None,
+    };
+    Some(Event {
+        timestamp: leading_timestamp(line),
+        source: source.into(),
+        kind: kind.into(),
+        application: Some("dnsmasq (logging resolver, not client application)".into()),
+        user: None,
+        destination: None,
+        detail: format!(
+            "{}\nResolver-reported DNS activity: {}. Client application/user, file transfer, payload bytes and exfiltration are unknown. Serial/requester apply only to this record; no cross-record association is inferred. Plain syslog time without year/offset is unknown.",
+            serde_json::json!({"action":action,"name":name,"relation":relation,"value":value,"serial":serial,"requester":requester}),
+            message
+        ),
+        evidence: raw.into(),
+        level: EvidenceLevel::Recorded,
+        transfer: None,
+        evidence_line: None,
+    })
+}
+
 fn gcloud_copy_event(line: &str, source: &str, raw: &str) -> Option<Event> {
     let stamp = line.get(..23)?.replace(' ', "T").replace(',', ".");
     stamp.parse::<jiff::civil::DateTime>().ok()?;
@@ -578,6 +646,9 @@ impl Parser {
     }
 
     pub fn parse(&mut self, line: &str, source: &str, raw: &str) -> Option<Event> {
+        if let Some(event) = dnsmasq_event(line, None, source, raw) {
+            return Some(event);
+        }
         if let Some(event) = gcloud_copy_event(line, source, raw) {
             return Some(event);
         }
