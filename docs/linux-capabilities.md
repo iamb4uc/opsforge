@@ -118,6 +118,26 @@ formats are not decoded by this reader. EX-08 remains pending complete gates.
 See the [Netfilter LOG documentation](https://ipset.netfilter.org/iptables-extensions.man.html)
 and [kernel logger source](https://github.com/torvalds/linux/blob/v6.8/net/netfilter/nf_log_syslog.c).
 
+## Retained Squid access records
+
+The built-in ten-field `squid` access-log format produces `proxy-request`
+records in Network/Timeline/Applications from discovered `/var/log` files or
+explicit imports. UNIX seconds/milliseconds identify the log timestamp, not
+an inferred transaction start. Methods, proxy/HTTP outcomes, cache/hierarchy
+labels, client/next-hop addresses, username labels and MIME stay source metadata.
+The logged URI can be sanitized/query-stripped and is not fetched or converted
+into a filename.
+
+The byte field is `%<st`: total reply traffic sent toward the client, including
+headers, not incoming request/upload bytes or file payload. CONNECT counters
+include tunnel traffic and cannot identify the encrypted files/methods inside
+it. Cache hits do not prove a fresh origin transfer; errors can still have
+large reply counters. No transfer/exfiltration verdict or client process/user
+ownership is inferred. Custom/common/combined/MIME-header-appended formats and
+malformed rows remain raw leads. Missing/rotated history cannot be reconstructed.
+This is bounded EX-08 coverage; the full release gate remains pending. See the
+[Squid logformat documentation](https://www.squid-cache.org/Doc/config/logformat/).
+
 ## Dependency pins
 
 - AVML: `v0.20.0`, x86_64 `avml-minimal`, SHA-256
