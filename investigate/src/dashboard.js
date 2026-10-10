@@ -32,7 +32,7 @@
     if (view === "exfil") return event.transfer?.direction === "upload";
     if (view === "downloads") return event.transfer?.direction === "download" || event.kind === "download";
     if (view === "index") return event.transfer || event.kind === "download";
-    if (view === "network") return event.transfer || ["network-lead", "active-connection", "connection-closed", "inbound-listener", "packet", "browser-visit", "dns-query", "dns-forwarded", "dns-reply", "dns-cached", "vpn-session-snapshot", "firewall-packet"].includes(event.kind);
+    if (view === "network") return event.transfer || ["network-lead", "active-connection", "connection-closed", "inbound-listener", "packet", "browser-visit", "dns-query", "dns-forwarded", "dns-reply", "dns-cached", "vpn-session-snapshot", "firewall-packet", "proxy-request"].includes(event.kind);
     if (view === "applications") return Boolean(event.application);
     return true;
   });

@@ -163,6 +163,66 @@ pub fn firewall_journal_event(record: &Value, source: &str, raw: &str) -> Option
     Some(event)
 }
 
+fn squid_event(line: &str, source: &str, raw: &str) -> Option<Event> {
+    let fields: Vec<_> = line.split_whitespace().collect();
+    if fields.len() != 10 {
+        return None;
+    }
+    let (seconds, milliseconds) = fields[0].split_once('.')?;
+    if seconds.is_empty()
+        || !seconds.bytes().all(|byte| byte.is_ascii_digit())
+        || milliseconds.len() != 3
+        || !milliseconds.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return None;
+    }
+    let stamp = seconds
+        .parse::<i64>()
+        .ok()?
+        .checked_mul(1000)?
+        .checked_add(milliseconds.parse::<i64>().ok()?)?;
+    let timestamp = jiff::Timestamp::from_millisecond(stamp).ok()?.to_string();
+    let decimal = |text: &str| {
+        (!text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit()))
+            .then(|| text.parse::<u64>().ok())
+            .flatten()
+    };
+    let elapsed = decimal(fields[1])?;
+    fields[2].parse::<std::net::IpAddr>().ok()?;
+    let (result, status) = fields[3].split_once('/')?;
+    if !["TCP_", "UDP_", "NONE_"]
+        .iter()
+        .any(|prefix| result.starts_with(prefix))
+        || status.len() != 3
+        || decimal(status)? > 599
+    {
+        return None;
+    }
+    let reply_bytes = decimal(fields[4])?;
+    if fields[5].is_empty() || !fields[5].bytes().all(|byte| byte.is_ascii_uppercase()) {
+        return None;
+    }
+    let (hierarchy, next_hop) = fields[8].split_once('/')?;
+    if !hierarchy.starts_with("HIER_") || next_hop.is_empty() {
+        return None;
+    }
+    Some(Event {
+        timestamp: Some(timestamp),
+        source: source.into(),
+        kind: "proxy-request".into(),
+        application: Some("Squid (proxy access log)".into()),
+        user: None,
+        destination: None,
+        detail: format!(
+            "{}\nProxy-reported request outcome in the built-in Squid access-log format. Reply bytes are the proxy's total reply traffic sent toward the client, including headers; not request/upload bytes, file payload or complete wire-frame bytes. CONNECT counters include tunnel traffic and do not reveal its encrypted HTTP methods, files or payload. Cache hits do not establish a fresh origin transfer. Result/HTTP status is the proxy's report, not proof of client receipt or exfiltration. Client/next-hop addresses and username are source labels, not verified process/user ownership. URI may be sanitized or query-stripped by Squid and is not fetched or converted into a filename. No file transfers are inferred.",
+            serde_json::json!({"elapsed_ms":elapsed,"client_address":fields[2],"result":result,"http_status":status,"reply_traffic_bytes":reply_bytes,"method":fields[5],"logged_uri":fields[6],"username_label":fields[7],"hierarchy":hierarchy,"next_hop_label":next_hop,"mime_label":fields[9]})
+        ),
+        evidence: raw.into(),
+        level: EvidenceLevel::Recorded,
+        transfer: None,
+        evidence_line: None,
+    })
+}
 fn gcloud_copy_event(line: &str, source: &str, raw: &str) -> Option<Event> {
     let stamp = line.get(..23)?.replace(' ', "T").replace(',', ".");
     stamp.parse::<jiff::civil::DateTime>().ok()?;
@@ -732,6 +792,9 @@ impl Parser {
 
     pub fn parse(&mut self, line: &str, source: &str, raw: &str) -> Option<Event> {
         if let Some(event) = firewall_event(line, None, source, raw) {
+            return Some(event);
+        }
+        if let Some(event) = squid_event(line, source, raw) {
             return Some(event);
         }
         if let Some(event) = dnsmasq_event(line, None, source, raw) {
