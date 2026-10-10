@@ -161,6 +161,15 @@ fn run_case(case: &mut Case, config: &RunConfig, progress: &impl Fn(&str)) -> Re
         source(case, "journal", |case| collect_journal(case, progress))?;
         progress("Preserving retained system logs");
         source(case, "system-logs", |case| collect_logs(case, progress))?;
+        for (path, prefix) in [
+            ("/run/openvpn", "openvpn-runtime"),
+            ("/run/openvpn-server", "openvpn-server-runtime"),
+            ("/run/openvpn-client", "openvpn-client-runtime"),
+        ] {
+            source(case, prefix, |case| {
+                import_path(case, Path::new(path), prefix, progress)
+            })?;
+        }
     }
     if config.exfil || config.downloads {
         progress("Collecting retained application transfer logs");
@@ -677,6 +686,9 @@ pub(crate) fn normalize_text_log(
         return Ok(count);
     }
     if let Some(count) = crate::exports::slack(case, raw, name, original)? {
+        return Ok(count);
+    }
+    if let Some(count) = crate::exports::openvpn_status(case, raw, name)? {
         return Ok(count);
     }
     if let Some(count) = crate::exports::element(case, raw, name, original)? {
