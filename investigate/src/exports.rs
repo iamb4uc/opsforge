@@ -150,6 +150,173 @@ fn regular(path: &Path) -> bool {
     std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_file())
 }
 
+pub(crate) fn element(
+    case: &mut Case,
+    raw: &Path,
+    name: &str,
+    original: &Path,
+) -> Result<Option<u64>> {
+    if original.extension().is_none_or(|ext| ext != "json") {
+        return Ok(None);
+    }
+    let Ok(document) = serde_json::from_reader::<_, Value>(BufReader::new(File::open(raw)?)) else {
+        return Ok(None);
+    };
+    if document.get("room_name").is_none() || document.get("exported_by").is_none() {
+        return Ok(None);
+    }
+    let rows = document["messages"].as_array().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "unsupported Element export: messages array missing",
+        )
+    })?;
+    let evidence = format!("raw/{name}");
+    let mut count = 0;
+    for (index, row) in rows.iter().enumerate() {
+        crate::runtime::check_cancelled()?;
+        let pointer = format!("/messages/{index}");
+        let (Some(kind), Some(_)) = (row["type"].as_str(), row["content"].as_object()) else {
+            gap(
+                case,
+                &evidence,
+                &pointer,
+                "unsupported Matrix event: type or content missing",
+            )?;
+            continue;
+        };
+        let timestamp = row["origin_server_ts"]
+            .as_i64()
+            .and_then(|time| jiff::Timestamp::from_millisecond(time).ok())
+            .map(|time| time.to_string());
+        if timestamp.is_none() {
+            gap(
+                case,
+                &evidence,
+                &pointer,
+                "missing or invalid server UNIX-millisecond timestamp; export date and event age are not substituted",
+            )?;
+        }
+        let content = &row["content"];
+        let redaction = row
+            .get("redacted_because")
+            .filter(|value| value.is_object())
+            .or_else(|| {
+                row["unsigned"]
+                    .get("redacted_because")
+                    .filter(|value| value.is_object())
+            });
+        let context = json!({
+            "json_pointer": pointer,
+            "source_path": original.display().to_string(),
+            "room_name": document.get("room_name"),
+            "exported_by": document.get("exported_by"),
+            "event_id": row.get("event_id"),
+            "room_id": row.get("room_id"),
+            "sender_id": row.get("sender"),
+            "event_type": kind,
+            "origin_server_ts": row.get("origin_server_ts"),
+            "redacted": redaction.is_some(),
+            "redaction_event_id": redaction.and_then(|value| value.get("event_id")),
+            "msgtype": content.get("msgtype"),
+            "relation_type": content["m.relates_to"].get("rel_type"),
+            "related_event_id": content["m.relates_to"].get("event_id"),
+            "reply_event_id": content["m.relates_to"]["m.in_reply_to"].get("event_id"),
+        });
+        let event = Event {
+            timestamp,
+            source: "element-export".into(),
+            kind: "chat-event-reference".into(),
+            application: Some("Element/Matrix".into()),
+            user: None,
+            destination: None,
+            detail: format!(
+                "Exported Matrix event metadata: {context}. Time is the recorded homeserver event time, not local receipt or device activity. Source IDs/display labels and export authenticity are not verified. Bodies, prior content and ciphertext remain raw; room names/IDs are not network destinations."
+            ),
+            evidence: evidence.clone(),
+            level: EvidenceLevel::Recorded,
+            transfer: None,
+            evidence_line: None,
+        };
+        case.event(&event)?;
+        count += 1;
+        if kind == "m.room.encrypted" {
+            gap(
+                case,
+                &evidence,
+                &format!("{pointer}/content"),
+                "encrypted Matrix event content is not decoded; no key acquisition or decryption",
+            )?;
+            continue;
+        }
+        if content.get("m.new_content").is_some() {
+            gap(
+                case,
+                &evidence,
+                &format!("{pointer}/content/m.new_content"),
+                "nested replacement content/file references remain raw and are not decoded",
+            )?;
+        }
+        if kind != "m.room.message"
+            || !matches!(
+                content["msgtype"].as_str(),
+                Some("m.file" | "m.image" | "m.audio" | "m.video")
+            )
+        {
+            continue;
+        }
+        let descriptor = content.get("file");
+        let uri = descriptor
+            .and_then(|file| file.get("url"))
+            .or_else(|| content.get("url"))
+            .and_then(Value::as_str)
+            .filter(|uri| {
+                uri.strip_prefix("mxc://")
+                    .and_then(|value| value.split_once('/'))
+                    .is_some_and(|(server, media)| {
+                        !server.is_empty() && !media.is_empty() && !uri.contains(['?', '#'])
+                    })
+            });
+        if uri.is_none() {
+            gap(
+                case,
+                &evidence,
+                &format!("{pointer}/content"),
+                "missing or invalid Matrix media URI; file metadata retained without fetching",
+            )?;
+        }
+        if descriptor.is_some() {
+            gap(
+                case,
+                &evidence,
+                &format!("{pointer}/content/file"),
+                "encrypted attachment descriptor retained as metadata; keys omitted, ciphertext hash not verified, payload not decrypted",
+            )?;
+        }
+        let metadata = json!({
+            "filename": content.get("filename"),
+            "body_label": content.get("body"),
+            "mxc_uri": uri,
+            "size": content["info"].get("size"),
+            "mimetype": content["info"].get("mimetype"),
+            "width": content["info"].get("w"),
+            "height": content["info"].get("h"),
+            "duration": content["info"].get("duration"),
+            "encrypted_descriptor_present": descriptor.is_some(),
+            "descriptor_version": descriptor.and_then(|file| file.get("v")),
+            "recorded_ciphertext_sha256": descriptor.and_then(|file| file["hashes"].get("sha256")),
+        });
+        let mut reference = event;
+        reference.kind = "chat-file-reference".into();
+        reference.detail = format!(
+            "Exported Matrix file reference: {metadata}. Event context: {context}. Size/type/dimensions/duration are source metadata, not observed payload bytes or verified content. Body may be a caption; an absent filename remains unknown. A message/media URI does not establish an upload, download, receipt or local payload. Encrypted descriptors are not decrypted, keys stay raw and recorded hashes are not computed hashes. Media and thumbnail URLs are never fetched."
+        );
+        case.event(&reference)?;
+        count += 1;
+    }
+    Ok(Some(count))
+}
+
 fn gap(case: &mut Case, evidence: &str, pointer: &str, detail: &str) -> Result<()> {
     case.coverage(&Coverage {
         source: format!("{evidence}#{pointer}"),

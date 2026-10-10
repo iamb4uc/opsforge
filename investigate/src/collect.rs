@@ -670,6 +670,9 @@ pub(crate) fn normalize_text_log(
     if let Some(count) = crate::exports::slack(case, raw, name, original)? {
         return Ok(count);
     }
+    if let Some(count) = crate::exports::element(case, raw, name, original)? {
+        return Ok(count);
+    }
     if let Some(count) = crate::applications::gcloud_manifest(case, raw, name, source)? {
         return Ok(count);
     }

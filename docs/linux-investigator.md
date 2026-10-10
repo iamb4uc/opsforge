@@ -337,6 +337,25 @@ are not decoded.
 The reader follows Slack's [export guide](https://slack.com/help/articles/220556107-How-to-read-Slack-data-exports)
 and [file object reference](https://docs.slack.dev/reference/objects/file-object/).
 
+Element JSON chat exports (`room_name`, `exported_by`, `messages`) can also be
+selected with `--import`. Matrix event references keep recorded homeserver
+UNIX-millisecond times, source sender/room/event IDs, relationships and redaction
+metadata. File/image/audio/video references retain explicit filenames, body
+labels, media URIs and source size/type/dimension/duration metadata. A body label
+can be a caption; no filename is invented. These are message references, not
+observed transfers, receipt, verified content or evidence of local device activity.
+Export labels/IDs and authenticity are unverified. Export dates and event ages
+are not substituted for missing timestamps. Encrypted events/attachment
+descriptors and nested replacement content have explicit decoding gaps; keys,
+ciphertext and prior message bodies remain raw. Descriptor hashes are recorded
+ciphertext claims, not computed content hashes. Media/thumbnail URLs are never
+fetched. ZIP archives need extraction; included payload files remain separate
+imports without an inferred event/file match. Each JSON document is read in
+memory and events are written individually. Unknown JSON remains raw leads;
+recognized unsupported schemas produce coverage gaps.
+Format references: [Element JSON exporter](https://github.com/element-hq/element-web/blob/171955a9e208e8aca41383a786c3f73341e8f76c/apps/web/src/utils/exportUtils/JSONExport.ts),
+[Matrix message/attachment format](https://spec.matrix.org/v1.19/client-server-api/#mroommessage).
+
 Discovery roots that are symbolic links are skipped explicitly; import their
 trusted targets to collect them. Credential/configuration files are outside
 the log-name search. Live SQLite copies retain the same consistency limitation
