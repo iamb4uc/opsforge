@@ -1,6 +1,8 @@
 # Contributing
 
-opsforge accepts shell-only defensive operations scripts.
+opsforge uses a Rust investigator with independently usable defensive Bash and
+PowerShell checks. The approved implementation scope and outstanding gates are
+tracked in [the investigator roadmap](docs/investigator-roadmap.md).
 
 ## Scope
 
@@ -13,8 +15,12 @@ evidence, findings, reports, or baselines.
 - Use Bash for Linux-specific scripts.
 - Use POSIX `sh` only when portability is realistic.
 - Use PowerShell for Windows scripts.
-- Do not add Python, Go, Rust, Node.js, Ruby, Perl, compiled helpers, or
-  undocumented helper binaries for core functionality.
+- Use Rust for investigator orchestration, case handling, parsers, and reporting.
+- Keep the existing offline dashboard JavaScript. Do not introduce another core
+  runtime or rewrite working scripts merely to change their language.
+- Established forensic tools may be documented optional backends, including
+  Volatility with its external Python runtime. Record tool versions and hashes;
+  acquisition must not install dependencies or download symbols automatically.
 
 ## Safety Rules
 

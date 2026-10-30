@@ -1,7 +1,13 @@
 # Compatibility Matrix
 
-opsforge is shell-only by design. Scripts should run with platform-native tools
-and degrade clearly when optional commands are missing.
+opsforge combines a Rust investigator with native Bash and PowerShell checks.
+Scripts degrade clearly when optional commands are missing. The existing
+investigator is Linux x86_64; Windows investigator support is planned and must
+not be inferred from Windows script CI results.
+
+The [approved roadmap](investigator-roadmap.md) targets x64 Windows 10 22H2,
+Windows 11, and Windows Server 2022/2025 alongside the Linux validation matrix.
+Each target requires real VM workflow evidence before a compatibility claim.
 
 ## Supported Shells
 
