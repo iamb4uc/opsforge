@@ -1,5 +1,18 @@
 # Linux investigator
 
+## Saved-case integrity verification
+
+Run `opsforge-investigate verify CASE --json` to compare retained raw files with
+the acquisition manifest and saved files with final checksums. Verification
+does not collect evidence, request sudo, or write to the case. Keep the case
+directory unchanged while it runs. It checks recorded integrity, not authenticity.
+
+Exit status 0 means recorded hashes match, 1 means discrepancies or incomplete
+verification, and 2 means evaluation could not run. Source issues, generated
+report issues, and missing final checksums are reported separately. Unsafe paths,
+links and malformed checksum/manifest records are rejected. Report rebuilding
+and native Windows verification remain pending.
+
 The setup menu can also select [Linux operational checks](investigator-checks.md)
 and their target/baseline settings. Their results appear in the Checks page.
 

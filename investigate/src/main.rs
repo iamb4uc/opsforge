@@ -11,7 +11,10 @@ use std::{
 };
 
 #[derive(Parser)]
-#[command(about = "Collect a Linux investigation case with an offline dashboard")]
+#[command(
+    about = "Collect a Linux investigation case with an offline dashboard",
+    after_help = "Saved-case verification: opsforge-investigate verify CASE [--json]"
+)]
 struct Args {
     #[arg(
         long,
@@ -55,6 +58,46 @@ struct Args {
 }
 
 fn main() -> Result<()> {
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("verify")) {
+        #[derive(Parser)]
+        #[command(
+            name = "opsforge-investigate verify",
+            about = "Verify a saved case without collection or elevation"
+        )]
+        struct VerifyArgs {
+            case: PathBuf,
+            #[arg(long)]
+            json: bool,
+        }
+        let args = VerifyArgs::parse_from(std::env::args_os().skip(1));
+        match opsforge_investigate::verify::verify(&args.case) {
+            Ok(result) => {
+                if args.json {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!(
+                        "Source issues: {}\nReport issues: {}\nUnverified: {}",
+                        result.source_issues.len(),
+                        result.report_issues.len(),
+                        result.unverified.len()
+                    );
+                    for issue in result
+                        .source_issues
+                        .iter()
+                        .chain(&result.report_issues)
+                        .chain(&result.unverified)
+                    {
+                        println!("{issue}");
+                    }
+                }
+                std::process::exit(result.exit_code());
+            }
+            Err(error) => {
+                eprintln!("Cannot verify case: {error:#}");
+                std::process::exit(2);
+            }
+        }
+    }
     let args = Args::parse();
     if args.config_stdin {
         if !is_root()? {

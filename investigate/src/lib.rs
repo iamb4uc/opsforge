@@ -9,3 +9,4 @@ pub mod report;
 mod runtime;
 pub mod transfers;
 pub mod tui;
+pub mod verify;

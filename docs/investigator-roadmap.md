@@ -11,13 +11,13 @@ This file records implementation work, not a support claim.
 |---|---|---|
 | Policy and architecture alignment | documentation updated | diff reviewed |
 | Portable case/runtime foundation | pending | pending |
-| Saved-case verification and rebuilding | pending | pending |
+| Saved-case verification and rebuilding | Linux verifier implemented; rebuild pending | six verifier tests passed; full gates pending |
 | Windows collection and check parity | pending | pending |
 | Disk acquisition and recovery | pending | pending |
 | Memory acquisition and analysis | pending | pending |
 | Cross-platform release and bootstraps | pending | pending |
 
-The functional changes remain pending. Record test evidence before advancing a
+Most functional changes remain pending. Record test evidence before advancing a
 status; documentation changes do not establish runtime support.
 
 ## Shared workflow and compatibility
