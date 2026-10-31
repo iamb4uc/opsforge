@@ -58,6 +58,27 @@ struct Args {
 }
 
 fn main() -> Result<()> {
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("rebuild")) {
+        #[derive(Parser)]
+        struct RebuildArgs {
+            case: PathBuf,
+            #[arg(long)]
+            output: PathBuf,
+            #[arg(long, value_enum, default_value = "bundle")]
+            mode: opsforge_investigate::rebuild::ReviewMode,
+            #[arg(long)]
+            allow_unverified: bool,
+        }
+        let args = RebuildArgs::parse_from(std::env::args_os().skip(1));
+        let output = opsforge_investigate::rebuild::rebuild(
+            &args.case,
+            &args.output,
+            args.mode,
+            args.allow_unverified,
+        )?;
+        println!("Review: {}", output.display());
+        return Ok(());
+    }
     if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("verify")) {
         #[derive(Parser)]
         #[command(

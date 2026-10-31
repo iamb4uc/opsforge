@@ -34,7 +34,7 @@ impl Verification {
     }
 }
 
-fn generated(path: &str) -> bool {
+pub(crate) fn generated(path: &str) -> bool {
     path.starts_with("dashboard/")
         || matches!(
             path,
@@ -59,7 +59,7 @@ fn valid_hash(hash: &str) -> Result<()> {
     Ok(())
 }
 
-fn digest(path: &Path) -> Result<(String, u64)> {
+pub(crate) fn digest(path: &Path) -> Result<(String, u64)> {
     let mut file = File::open(path)?;
     let mut hash = Sha256::new();
     let mut size = 0u64;

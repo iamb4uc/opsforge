@@ -11,7 +11,7 @@ This file records implementation work, not a support claim.
 |---|---|---|
 | Policy and architecture alignment | documentation updated | diff reviewed |
 | Portable case/runtime foundation | pending | pending |
-| Saved-case verification and rebuilding | Linux verifier implemented; rebuild pending | six verifier tests passed; full gates pending |
+| Saved-case verification and rebuilding | Linux CLI verifier and bundle/linked rebuild implemented; TUI pending | ten regression tests passed; browser and cross-platform gates pending |
 | Windows collection and check parity | pending | pending |
 | Disk acquisition and recovery | pending | pending |
 | Memory acquisition and analysis | pending | pending |

@@ -91,3 +91,97 @@ fn evidence_symlink_is_rejected() {
     std::os::unix::fs::symlink("/etc/passwd", fixture.0.join("raw/link")).unwrap();
     assert!(verify(&fixture.0).is_err());
 }
+
+#[test]
+fn bundle_rebuild_preserves_source_and_survives_relocation() {
+    let fixture = Fixture::new("bundle");
+    let before = fs::read(fixture.0.join("checksums.sha256")).unwrap();
+    fs::remove_file(fixture.0.join("report.md")).unwrap();
+    let output = fixture.0.with_extension("review");
+    let result = Command::new(env!("CARGO_BIN_EXE_opsforge-investigate"))
+        .arg("rebuild")
+        .arg(&fixture.0)
+        .arg("--output")
+        .arg(&output)
+        .env("PATH", "")
+        .output()
+        .unwrap();
+    assert!(result.status.success(), "{:?}", result);
+    assert_eq!(
+        fs::read(fixture.0.join("checksums.sha256")).unwrap(),
+        before
+    );
+    assert!(!fixture.0.join("report.md").exists());
+    assert_eq!(verify(&output).unwrap().exit_code(), 0);
+    let moved = output.with_extension("moved");
+    fs::rename(&output, &moved).unwrap();
+    assert_eq!(
+        fs::read(moved.join("raw/file with spaces")).unwrap(),
+        b"evidence"
+    );
+    assert!(moved.join("dashboard/index.html").is_file());
+    fs::remove_dir_all(moved).unwrap();
+}
+
+#[test]
+fn linked_rebuild_uses_relative_evidence_without_copying_it() {
+    use opsforge_investigate::rebuild::{ReviewMode, rebuild};
+    let fixture = Fixture::new("linked");
+    let output = fixture.0.with_extension("review");
+    rebuild(&fixture.0, &output, ReviewMode::Linked, false).unwrap();
+    assert!(!output.join("raw").exists());
+    let review: serde_json::Value =
+        serde_json::from_slice(&fs::read(output.join("review.json")).unwrap()).unwrap();
+    let base = review["evidence_base"].as_str().unwrap();
+    assert_eq!(
+        fs::read(
+            output
+                .join("dashboard")
+                .join(base)
+                .join("raw/file with spaces")
+        )
+        .unwrap(),
+        b"evidence"
+    );
+    fs::remove_dir_all(output).unwrap();
+}
+
+#[test]
+fn rebuild_rejects_tampering_even_with_unverified_override() {
+    use opsforge_investigate::rebuild::{ReviewMode, rebuild};
+    let fixture = Fixture::new("blocked");
+    fs::write(fixture.0.join("raw/file with spaces"), "changed").unwrap();
+    let output = fixture.0.with_extension("review");
+    assert!(rebuild(&fixture.0, &output, ReviewMode::Bundle, true).is_err());
+    assert!(!output.exists());
+}
+
+#[test]
+fn rebuild_requires_override_for_missing_checksums_and_refuses_overlap() {
+    use opsforge_investigate::rebuild::{ReviewMode, rebuild};
+    let fixture = Fixture::new("override");
+    let output = fixture.0.with_extension("review");
+    fs::remove_file(fixture.0.join("checksums.sha256")).unwrap();
+    assert!(rebuild(&fixture.0, &output, ReviewMode::Bundle, false).is_err());
+    assert!(
+        rebuild(
+            &fixture.0,
+            &fixture.0.join("review"),
+            ReviewMode::Bundle,
+            true
+        )
+        .is_err()
+    );
+    rebuild(&fixture.0, &output, ReviewMode::Bundle, true).unwrap();
+    let review: serde_json::Value =
+        serde_json::from_slice(&fs::read(output.join("review.json")).unwrap()).unwrap();
+    assert_eq!(
+        review["verification"]["unverified"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(rebuild(&fixture.0, &output, ReviewMode::Bundle, true).is_err());
+    fs::remove_dir_all(output).unwrap();
+}

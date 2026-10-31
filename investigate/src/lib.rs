@@ -5,6 +5,7 @@ mod checks;
 pub mod collect;
 pub mod config;
 mod exports;
+pub mod rebuild;
 pub mod report;
 mod runtime;
 pub mod transfers;
