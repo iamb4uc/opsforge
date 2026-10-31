@@ -13,7 +13,7 @@ use std::{
 #[derive(Parser)]
 #[command(
     about = "Collect a Linux investigation case with an offline dashboard",
-    after_help = "Saved-case verification: opsforge-investigate verify CASE [--json]"
+    after_help = "Saved cases: review (terminal), verify CASE [--json], rebuild CASE --output DIRECTORY [--mode bundle|linked]"
 )]
 struct Args {
     #[arg(
@@ -58,6 +58,13 @@ struct Args {
 }
 
 fn main() -> Result<()> {
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("review")) {
+        #[derive(Parser)]
+        #[command(about = "Review a saved case interactively without collection")]
+        struct ReviewArgs {}
+        ReviewArgs::parse_from(std::env::args_os().skip(1));
+        return opsforge_investigate::review_ui::run();
+    }
     if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("rebuild")) {
         #[derive(Parser)]
         struct RebuildArgs {

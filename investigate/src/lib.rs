@@ -7,6 +7,7 @@ pub mod config;
 mod exports;
 pub mod rebuild;
 pub mod report;
+pub mod review_ui;
 mod runtime;
 pub mod transfers;
 pub mod tui;

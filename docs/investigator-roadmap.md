@@ -11,7 +11,7 @@ This file records implementation work, not a support claim.
 |---|---|---|
 | Policy and architecture alignment | documentation updated | diff reviewed |
 | Portable case/runtime foundation | pending | pending |
-| Saved-case verification and rebuilding | Linux CLI verifier and bundle/linked rebuild implemented; TUI pending | ten regression tests passed; browser and cross-platform gates pending |
+| Saved-case verification and rebuilding | Linux CLI and review TUI implemented | ten saved-case tests, two form tests, PTY verify/bundle workflow passed; linked TUI, browser and cross-platform gates pending |
 | Windows collection and check parity | pending | pending |
 | Disk acquisition and recovery | pending | pending |
 | Memory acquisition and analysis | pending | pending |
@@ -26,11 +26,12 @@ Provide Collect, Review saved case, Acquire disk or memory, and Analyse acquired
 images in the TUI and unattended CLI. Preserve existing flat collection flags,
 Linux check names, saved configurations, standalone wrappers, and findings.
 
-Planned command interfaces (not yet implemented):
+Command interfaces (verify, rebuild and review implemented on Linux; other additions pending):
 
 ```text
 opsforge-investigate collect [existing options]
 opsforge-investigate verify CASE [--json]
+opsforge-investigate review
 opsforge-investigate rebuild CASE --output DIRECTORY --mode bundle|linked
 opsforge-investigate acquire disk --config FILE --execute
 opsforge-investigate acquire memory --config FILE --execute
