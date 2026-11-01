@@ -11,7 +11,7 @@ This file records implementation work, not a support claim.
 |---|---|---|
 | Policy and architecture alignment | documentation updated | diff reviewed |
 | Portable case/runtime foundation | pending | pending |
-| Saved-case verification and rebuilding | Linux CLI and review TUI implemented | ten saved-case tests, two form tests, PTY verify/bundle workflow passed; linked TUI, browser and cross-platform gates pending |
+| Saved-case verification and rebuilding | Linux CLI and review TUI implemented | eleven saved-case tests, three UI tests, PTY verify/bundle/linked workflows and all nine browser pages in both modes passed; cross-platform gates pending |
 | Windows collection and check parity | pending | pending |
 | Disk acquisition and recovery | pending | pending |
 | Memory acquisition and analysis | pending | pending |
@@ -26,7 +26,7 @@ Provide Collect, Review saved case, Acquire disk or memory, and Analyse acquired
 images in the TUI and unattended CLI. Preserve existing flat collection flags,
 Linux check names, saved configurations, standalone wrappers, and findings.
 
-Command interfaces (verify, rebuild and review implemented on Linux; other additions pending):
+Command interfaces (collect, verify, rebuild and review implemented on Linux; other additions pending):
 
 ```text
 opsforge-investigate collect [existing options]
@@ -38,6 +38,10 @@ opsforge-investigate acquire memory --config FILE --execute
 opsforge-investigate analyze disk --config FILE
 opsforge-investigate analyze memory --config FILE
 ```
+
+The `collect` prefix is optional: existing flat flags and configuration files keep
+the same behavior. Dry-run regression checks compare both spellings, including
+invalid durations and missing check targets, without collection or elevation.
 
 Dry-run validates configuration without acquisition, elevation, driver loading,
 or dependency installation. Add format/platform metadata without rewriting old

@@ -126,7 +126,11 @@ fn main() -> Result<()> {
             }
         }
     }
-    let args = Args::parse();
+    let mut arguments = std::env::args_os().collect::<Vec<_>>();
+    if arguments.get(1).is_some_and(|arg| arg == "collect") {
+        arguments.remove(1);
+    }
+    let args = Args::parse_from(arguments);
     if args.config_stdin {
         if !is_root()? {
             bail!("--config-stdin requires root");

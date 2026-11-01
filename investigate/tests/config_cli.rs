@@ -1,6 +1,39 @@
 use std::{fs, process::Command};
 
 #[test]
+fn collect_command_preserves_flat_cli_settings_and_validation() {
+    let binary = env!("CARGO_BIN_EXE_opsforge-investigate");
+    for flags in [
+        vec![
+            "--dry-run",
+            "--duration",
+            "2m",
+            "--no-capture",
+            "--check",
+            "ssh",
+        ],
+        vec!["--dry-run", "--duration", "0s"],
+        vec!["--dry-run", "--check", "tls"],
+    ] {
+        let flat = Command::new(binary)
+            .args(&flags)
+            .env("PATH", "")
+            .output()
+            .unwrap();
+        let collect = Command::new(binary)
+            .arg("collect")
+            .args(&flags)
+            .env("PATH", "")
+            .output()
+            .unwrap();
+        assert_eq!(flat.status.success(), flags.contains(&"2m"));
+        assert_eq!(flat.status.code(), collect.status.code());
+        assert_eq!(flat.stdout, collect.stdout);
+        assert_eq!(flat.stderr, collect.stderr);
+    }
+}
+
+#[test]
 fn dry_run_validates_config_and_overrides_without_creating_a_case() {
     let base = std::env::temp_dir().join(format!("opsforge-config-cli-{}", std::process::id()));
     fs::create_dir_all(&base).expect("fixture directory");
