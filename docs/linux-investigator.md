@@ -18,9 +18,11 @@ support remains pending.
 Run `opsforge-investigate review` for terminal setup. Enter the source case and
 new output directory, choose bundle or linked storage, then select Verify source
 or Rebuild report. Missing-checksum acceptance is a separate toggle and defaults
-off. Esc exits; paths accept spaces. Verification/rebuilding runs synchronously;
-keyboard input resumes after the operation finishes. For long unattended jobs,
-use the commands below. This screen does not collect or request elevation.
+off. Esc exits when idle; paths accept spaces. Verification/rebuilding runs on a
+worker while the terminal continues responding. During an operation, the form
+waits for safe completion before accepting another operation or exiting; it does
+not abandon an evidence copy. For unattended jobs, use the commands below. This
+screen does not collect or request elevation.
 
 ```bash
 opsforge-investigate rebuild CASE --output NEW_DIRECTORY --mode bundle

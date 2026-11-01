@@ -10,7 +10,7 @@ use ratatui::{
 };
 use std::{io::IsTerminal, path::Path};
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Form {
     source: String,
     output: String,
@@ -73,6 +73,19 @@ impl Drop for Restore {
     }
 }
 
+struct Pending(Option<std::thread::JoinHandle<Result<String>>>);
+impl Drop for Pending {
+    fn drop(&mut self) {
+        if let Some(handle) = self.0.take() {
+            match handle.join() {
+                Ok(Ok(_)) => {}
+                Ok(Err(error)) => eprintln!("Review failed: {error:#}"),
+                Err(_) => eprintln!("Review worker panicked"),
+            }
+        }
+    }
+}
+
 /// Configure and run saved-case operations without acquisition or elevation.
 pub fn run() -> Result<()> {
     if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
@@ -82,7 +95,20 @@ pub fn run() -> Result<()> {
     let _restore = Restore;
     let mut form = Form::default();
     let mut message = String::new();
+    let mut pending = Pending(None);
     loop {
+        if pending
+            .0
+            .as_ref()
+            .is_some_and(|handle| handle.is_finished())
+            && let Some(handle) = pending.0.take()
+        {
+            message = match handle.join() {
+                Ok(Ok(value)) => value,
+                Ok(Err(error)) => format!("Failed: {error:#}"),
+                Err(_) => "Failed: review worker panicked; inspect any partial output.".into(),
+            };
+        }
         terminal.draw(|frame| {
             let rows = [
                 format!("Source case: {}", form.source),
@@ -127,10 +153,19 @@ pub fn run() -> Result<()> {
                 frame.area(),
             );
         })?;
+        if !event::poll(std::time::Duration::from_millis(100))? {
+            continue;
+        }
         let Event::Key(key) = event::read()? else {
             continue;
         };
         if key.kind != KeyEventKind::Press {
+            continue;
+        }
+        if pending.0.is_some() {
+            message =
+                "Review is still running. Waiting for safe completion; no collection is running."
+                    .into();
             continue;
         }
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
@@ -149,11 +184,13 @@ pub fn run() -> Result<()> {
                 2 => form.linked = !form.linked,
                 3 => form.allow_unverified = !form.allow_unverified,
                 _ => {
-                    terminal.draw(|frame| frame.render_widget(Paragraph::new("Checking saved evidence. Large cases may take time; no collection is running."), frame.area()))?;
-                    message = match form.run() {
-                        Ok(value) => value,
-                        Err(error) => format!("Failed: {error:#}"),
-                    };
+                    let job = form.clone();
+                    pending.0 = Some(
+                        std::thread::Builder::new()
+                            .name("case-review".into())
+                            .spawn(move || job.run())?,
+                    );
+                    message = "Checking saved evidence. Large cases may take time; waiting for safe completion.".into();
                 }
             },
             _ => {}
@@ -164,6 +201,16 @@ pub fn run() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn pending_operation_finishes_before_guard_is_dropped() {
+        let (send, receive) = std::sync::mpsc::channel();
+        let pending = Pending(Some(std::thread::spawn(move || {
+            send.send(()).expect("test receiver");
+            Ok(String::new())
+        })));
+        drop(pending);
+        assert_eq!(receive.try_recv(), Ok(()));
+    }
     #[test]
     fn editing_output_preserves_source_and_accepts_spaces() {
         let mut form = Form {
