@@ -47,6 +47,23 @@ fn pristine_case_verifies_without_changes_or_collection() {
 }
 
 #[test]
+fn nested_checksum_names_are_retained_and_verified() {
+    let fixture = Fixture::new("nested-checksums");
+    fs::create_dir(fixture.0.join("normalized/import")).unwrap();
+    for name in ["checksums.sha256", "checksums.sha256.tmp"] {
+        fs::write(fixture.0.join("normalized/import").join(name), "retained").unwrap();
+    }
+    report::write_checksums(&fixture.0).unwrap();
+    assert_eq!(verify(&fixture.0).unwrap().exit_code(), 0);
+    fs::write(
+        fixture.0.join("normalized/import/checksums.sha256"),
+        "changed",
+    )
+    .unwrap();
+    assert!(!verify(&fixture.0).unwrap().source_issues.is_empty());
+}
+
+#[test]
 fn modified_evidence_is_a_source_issue() {
     let fixture = Fixture::new("changed");
     fs::write(fixture.0.join("raw/file with spaces"), "tampered").unwrap();

@@ -241,8 +241,8 @@ pub fn write_checksums(root: &Path) -> Result<()> {
     for entry in WalkDir::new(root).sort_by_file_name() {
         let entry = entry?;
         if !entry.file_type().is_file()
-            || entry.file_name() == "checksums.sha256"
-            || entry.file_name() == "checksums.sha256.tmp"
+            || entry.path() == root.join("checksums.sha256")
+            || entry.path() == path
         {
             continue;
         }
