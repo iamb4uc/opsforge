@@ -1,14 +1,22 @@
+#[cfg(unix)]
+use std::time::Instant;
+#[cfg(unix)]
+use std::{
+    os::unix::process::CommandExt,
+    process::{Child, Stdio},
+};
+#[cfg(windows)]
+type Child = Box<dyn process_wrap::std::ChildWrapper>;
 use anyhow::{Context, Result};
 use std::{
     io,
-    os::unix::process::CommandExt,
-    process::{Child, ChildStdout, Command, ExitStatus, Stdio},
+    process::{ChildStdout, Command, ExitStatus},
     sync::{
         Arc, Mutex, OnceLock,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     thread::{self, JoinHandle},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 static CANCELLED: OnceLock<Arc<AtomicUsize>> = OnceLock::new();
@@ -17,6 +25,7 @@ fn flag() -> &'static Arc<AtomicUsize> {
     CANCELLED.get_or_init(|| Arc::new(AtomicUsize::new(0)))
 }
 
+#[cfg(unix)]
 pub fn install_signal_handlers() -> Result<()> {
     for signal in [signal_hook::consts::SIGINT, signal_hook::consts::SIGTERM] {
         signal_hook::flag::register_usize(signal, Arc::clone(flag()), signal as usize)?;
@@ -24,6 +33,13 @@ pub fn install_signal_handlers() -> Result<()> {
     Ok(())
 }
 
+#[cfg(windows)]
+pub fn install_signal_handlers() -> Result<()> {
+    ctrlc::set_handler(|| flag().store(2, Ordering::Relaxed))?;
+    Ok(())
+}
+
+#[cfg(unix)]
 pub(crate) fn cancel() {
     flag().store(1, Ordering::Relaxed);
 }
@@ -39,6 +55,7 @@ pub(crate) fn check_cancelled() -> Result<()> {
     Err(io::Error::new(io::ErrorKind::Interrupted, reason).into())
 }
 
+#[cfg(unix)]
 fn signal_group(pid: u32, signal: &str) -> bool {
     Command::new("kill")
         .args([signal, "--", &format!("-{pid}")])
@@ -63,7 +80,15 @@ impl OwnedChild {
     }
 
     fn start(command: &mut Command, cancelled: Arc<AtomicUsize>) -> Result<Self> {
-        let child = Arc::new(Mutex::new(command.process_group(0).spawn()?));
+        #[cfg(unix)]
+        let child = command.process_group(0).spawn()?;
+        #[cfg(windows)]
+        let child = {
+            use process_wrap::std::{CommandWrap, JobObject};
+            let command = std::mem::replace(command, Command::new(""));
+            CommandWrap::from(command).wrap(JobObject).spawn()?
+        };
+        let child = Arc::new(Mutex::new(child));
         let finished = Arc::new(AtomicBool::new(false));
         let mut owned = Self {
             child,
@@ -77,11 +102,14 @@ impl OwnedChild {
         let cancelled = Arc::clone(&owned.cancelled);
         let terminated = Arc::clone(&owned.terminated);
         let watcher = thread::Builder::new().spawn(move || {
+            #[cfg(unix)]
             let mut started = None;
             let mut previous = None;
             while !watched_finished.load(Ordering::Relaxed) {
                 if cancelled.load(Ordering::Relaxed) != 0 {
+                    #[cfg(unix)]
                     let elapsed = started.get_or_insert_with(Instant::now).elapsed();
+                    #[cfg(unix)]
                     let signal = if elapsed >= Duration::from_secs(2) {
                         "-KILL"
                     } else if elapsed >= Duration::from_secs(1) {
@@ -89,6 +117,8 @@ impl OwnedChild {
                     } else {
                         "-INT"
                     };
+                    #[cfg(windows)]
+                    let signal = "-KILL";
                     if previous != Some(signal) {
                         // The lock prevents reaping and PID reuse before signalling the owned group.
                         let mut child = watched_child
@@ -97,9 +127,7 @@ impl OwnedChild {
                         if watched_finished.load(Ordering::Relaxed) {
                             break;
                         }
-                        if !signal_group(child.id(), signal) {
-                            let _ = child.kill();
-                        }
+                        stop_child(&mut child, signal);
                         if signal == "-KILL" {
                             terminated.store(true, Ordering::Relaxed);
                         }
@@ -114,12 +142,12 @@ impl OwnedChild {
     }
 
     pub(crate) fn take_stdout(&self) -> Result<ChildStdout> {
-        self.child
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .stdout
-            .take()
-            .context("collector child stdout")
+        let mut child = self.child.lock().unwrap_or_else(|error| error.into_inner());
+        #[cfg(unix)]
+        let stdout = child.stdout.take();
+        #[cfg(windows)]
+        let stdout = child.stdout().take();
+        stdout.context("collector child stdout")
     }
 
     pub(crate) fn try_wait(&self) -> io::Result<Option<ExitStatus>> {
@@ -151,11 +179,13 @@ impl Drop for OwnedChild {
     fn drop(&mut self) {
         {
             let mut child = self.child.lock().unwrap_or_else(|error| error.into_inner());
+            // A Windows group leader can exit while descendants still belong to its job.
+            #[cfg(windows)]
+            stop_child(&mut child, "-KILL");
             if !self.finished.swap(true, Ordering::Relaxed) {
-                signal_group(child.id(), "-TERM");
+                stop_child(&mut child, "-TERM");
                 thread::sleep(Duration::from_millis(100));
-                signal_group(child.id(), "-KILL");
-                let _ = child.kill();
+                stop_child(&mut child, "-KILL");
                 let _ = child.wait();
             }
         }
@@ -165,7 +195,7 @@ impl Drop for OwnedChild {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::io::{BufRead, BufReader};
@@ -271,5 +301,74 @@ mod tests {
             thread::sleep(Duration::from_millis(10));
         }
         std::fs::remove_file(path).expect("remove owned pid fixture");
+    }
+}
+
+fn stop_child(child: &mut Child, signal: &str) {
+    #[cfg(unix)]
+    if !signal_group(child.id(), signal) {
+        let _ = child.kill();
+    }
+    #[cfg(windows)]
+    {
+        let _ = signal;
+        let _ = child.start_kill();
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+    use std::{
+        io::{BufRead, BufReader},
+        process::Stdio,
+        time::Instant,
+    };
+
+    #[test]
+    fn cancellation_stops_owned_descendants_and_leaves_other_jobs_running() {
+        let mut other_command = crate::platform::powershell().unwrap();
+        other_command.args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Start-Sleep 60",
+        ]);
+        let other = OwnedChild::start(&mut other_command, Arc::new(AtomicUsize::new(0))).unwrap();
+        let cancelled = Arc::new(AtomicUsize::new(0));
+        let mut command = crate::platform::powershell().unwrap();
+        command.args(["-NoProfile", "-NonInteractive", "-Command",
+            "$p = Start-Process (Join-Path $PSHOME powershell.exe) -ArgumentList '-NoProfile -NonInteractive -Command Start-Sleep 60' -PassThru; Write-Output $p.Id; Start-Sleep 60"])
+            .stdout(Stdio::piped());
+        let child = OwnedChild::start(&mut command, Arc::clone(&cancelled)).unwrap();
+        let (send, receive) = std::sync::mpsc::channel();
+        let stdout = child.take_stdout().unwrap();
+        let reader = thread::spawn(move || {
+            let mut line = String::new();
+            BufReader::new(stdout).read_line(&mut line).unwrap();
+            send.send(line).unwrap();
+        });
+        let pid: u32 = receive
+            .recv_timeout(Duration::from_secs(20))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        reader.join().unwrap();
+        cancelled.store(1, Ordering::Relaxed);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                assert!(!status.success());
+                break;
+            }
+            assert!(Instant::now() < deadline, "owned job did not stop");
+            thread::sleep(Duration::from_millis(50));
+        }
+        let status = crate::platform::powershell().unwrap().args(["-NoProfile", "-NonInteractive", "-Command",
+            "if (Get-Process -Id $env:OPSFORGE_TEST_PID -ErrorAction SilentlyContinue) { exit 1 }"])
+            .env("OPSFORGE_TEST_PID", pid.to_string()).status().unwrap();
+        assert!(status.success(), "owned descendant survived cancellation");
+        assert!(other.try_wait().unwrap().is_none());
     }
 }

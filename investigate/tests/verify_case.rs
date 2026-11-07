@@ -202,3 +202,31 @@ fn rebuild_requires_override_for_missing_checksums_and_refuses_overlap() {
     assert!(rebuild(&fixture.0, &output, ReviewMode::Bundle, true).is_err());
     fs::remove_dir_all(output).unwrap();
 }
+
+#[cfg(windows)]
+#[test]
+fn rebuilt_files_inherit_private_acl_and_collection_stays_disabled() {
+    use opsforge_investigate::rebuild::{ReviewMode, rebuild};
+    let fixture = Fixture::new("windows-acl");
+    let output = fixture.0.with_extension("review");
+    rebuild(&fixture.0, &output, ReviewMode::Bundle, false).unwrap();
+    let powershell = PathBuf::from(std::env::var_os("SystemRoot").unwrap())
+        .join("System32/WindowsPowerShell/v1.0/powershell.exe");
+    let result = Command::new(powershell).args(["-NoProfile", "-NonInteractive", "-Command",
+        "$ErrorActionPreference='Stop'; $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User; $acl=[IO.File]::GetAccessControl($env:OPSFORGE_TEST_FILE); $rules=@($acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])); if ($rules.Count -ne 1 -or $rules[0].IdentityReference -ne $sid -or -not $rules[0].IsInherited) { throw 'copied file did not inherit private ACL' }"])
+        .env("OPSFORGE_TEST_FILE", output.join("raw/file with spaces")).output().unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(verify(&output).unwrap().exit_code(), 0);
+    let command = Command::new(env!("CARGO_BIN_EXE_opsforge-investigate"))
+        .args(["collect", "--non-interactive"])
+        .env("PATH", "")
+        .output()
+        .unwrap();
+    assert!(!command.status.success());
+    assert!(String::from_utf8_lossy(&command.stderr).contains("collection is not available"));
+    fs::remove_dir_all(output).unwrap();
+}

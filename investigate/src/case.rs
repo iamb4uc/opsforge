@@ -1,11 +1,16 @@
+use crate::platform::private_dir;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+#[cfg(unix)]
+use std::collections::BTreeSet;
+#[cfg(unix)]
+use std::io::BufRead;
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
 use std::{
-    collections::BTreeSet,
-    fs::{self, DirBuilder, File, OpenOptions},
-    io::{BufRead, BufReader, BufWriter, Read, Write},
-    os::unix::fs::{DirBuilderExt, MetadataExt},
+    fs::{self, File, OpenOptions},
+    io::{BufReader, BufWriter, Read, Write},
     path::{Path, PathBuf},
 };
 
@@ -63,6 +68,7 @@ pub enum CoverageState {
 }
 
 impl CoverageState {
+    #[cfg(unix)]
     pub(crate) fn from_io(error: &std::io::Error) -> Self {
         match error.kind() {
             std::io::ErrorKind::NotFound => Self::Unavailable,
@@ -72,6 +78,7 @@ impl CoverageState {
         }
     }
 
+    #[cfg(unix)]
     pub(crate) fn from_error(error: &anyhow::Error) -> Self {
         error
             .downcast_ref::<std::io::Error>()
@@ -102,20 +109,13 @@ pub struct Case {
     manifest: BufWriter<File>,
 }
 
-fn private_dir(path: &Path) -> Result<()> {
-    DirBuilder::new()
-        .mode(0o700)
-        .create(path)
-        .with_context(|| format!("creating {}", path.display()))?;
-    Ok(())
-}
-
 fn append_file(path: &Path) -> Result<BufWriter<File>> {
     Ok(BufWriter::new(
         OpenOptions::new().create_new(true).write(true).open(path)?,
     ))
 }
 
+#[cfg(unix)]
 fn validate_root_output_base(base: &Path) -> Result<()> {
     for ancestor in base.ancestors() {
         let metadata = fs::metadata(ancestor)?;
@@ -133,13 +133,18 @@ impl Case {
     pub fn new(output_base: &Path) -> Result<Self> {
         fs::create_dir_all(output_base)
             .with_context(|| format!("creating {}", output_base.display()))?;
+        #[cfg(windows)]
+        crate::platform::reject_link_ancestors(output_base)?;
         let base = fs::canonicalize(output_base)?;
-        let uid = std::process::Command::new("id").arg("-u").output()?;
-        if !uid.status.success() {
-            anyhow::bail!("id -u failed");
-        }
-        if uid.stdout == b"0\n" {
-            validate_root_output_base(&base)?;
+        #[cfg(unix)]
+        {
+            let uid = std::process::Command::new("id").arg("-u").output()?;
+            if !uid.status.success() {
+                anyhow::bail!("id -u failed");
+            }
+            if uid.stdout == b"0\n" {
+                validate_root_output_base(&base)?;
+            }
         }
         let host = std::process::Command::new("hostname")
             .output()
@@ -163,9 +168,15 @@ impl Case {
                 } else {
                     format!("{name}-{attempt}")
                 });
-                match DirBuilder::new().mode(0o700).create(&candidate) {
+                match private_dir(&candidate) {
                     Ok(()) => Some(Ok(candidate)),
-                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => None,
+                    Err(error)
+                        if error.downcast_ref::<std::io::Error>().is_some_and(|error| {
+                            error.kind() == std::io::ErrorKind::AlreadyExists
+                        }) =>
+                    {
+                        None
+                    }
                     Err(error) => Some(Err(error)),
                 }
             })
@@ -200,9 +211,7 @@ impl Case {
     }
 
     pub fn copy_evidence(&mut self, source: &Path, name: &str) -> Result<PathBuf> {
-        if name.split('/').any(|part| matches!(part, "" | "." | "..")) {
-            anyhow::bail!("invalid evidence name");
-        }
+        crate::verify::valid_path(name)?;
         let destination = self.root.join("raw").join(name);
         let mut input = BufReader::new(
             File::open(source).with_context(|| format!("opening {}", source.display()))?,
@@ -244,6 +253,7 @@ impl Case {
         self.record_existing_inner(source, name, true)
     }
 
+    #[cfg(unix)]
     pub(crate) fn record_partial_files(&mut self) -> Result<()> {
         let recorded = BufReader::new(File::open(self.root.join("manifest.jsonl"))?)
             .lines()
@@ -286,9 +296,7 @@ impl Case {
         name: &str,
         interruptible: bool,
     ) -> Result<()> {
-        if name.split('/').any(|part| matches!(part, "" | "." | "..")) {
-            anyhow::bail!("invalid evidence name");
-        }
+        crate::verify::valid_path(name)?;
         let path = self.root.join("raw").join(name);
         let mut input = BufReader::new(File::open(&path)?);
         let mut hash = Sha256::new();
@@ -319,7 +327,7 @@ impl Case {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::{Case, Coverage, CoverageState, Event, EvidenceLevel, validate_root_output_base};
 

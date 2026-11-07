@@ -2,7 +2,6 @@ use anyhow::{Context, Result, bail};
 use serde::Serialize;
 use std::{
     fs,
-    os::unix::fs::DirBuilderExt,
     path::{Path, PathBuf},
 };
 
@@ -39,6 +38,7 @@ pub fn rebuild(
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
+    crate::platform::reject_link_ancestors(parent)?;
     let parent = fs::canonicalize(parent).context("output parent must already exist")?;
     let name = output
         .file_name()
@@ -51,12 +51,10 @@ pub fn rebuild(
         ReviewMode::Bundle => "../".to_owned(),
         ReviewMode::Linked => relative_url(&output.join("dashboard"), &source)?,
     };
-    fs::DirBuilder::new()
-        .mode(0o700)
-        .create(&output)
-        .context("output must not exist")?;
+    crate::platform::private_dir(&output).context("output must not exist")?;
     let mut review = serde_json::json!({"status":"in_progress", "mode":mode,"source":source,
         "tool_version":env!("CARGO_PKG_VERSION"),"rebuilt_at":jiff::Timestamp::now().to_string(),
+        "review_platform":std::env::consts::OS,
         "verification":verification,"evidence_base":evidence_base});
     fs::write(
         output.join("review.json"),
@@ -65,6 +63,7 @@ pub fn rebuild(
     let result = (|| -> Result<()> {
         for entry in walkdir::WalkDir::new(&source).follow_links(false) {
             let entry = entry?;
+            crate::platform::reject_link(entry.path())?;
             if entry.file_type().is_dir() {
                 continue;
             }
@@ -72,8 +71,8 @@ pub fn rebuild(
                 bail!("source changed: non-regular file");
             }
             let relative = entry.path().strip_prefix(&source)?;
-            let name = relative.to_str().context("non-UTF-8 path")?;
-            if crate::verify::generated(name)
+            let name = crate::platform::artifact_path(relative)?;
+            if crate::verify::generated(&name)
                 || matches!(mode, ReviewMode::Linked) && name.starts_with("raw/")
             {
                 continue;
@@ -87,7 +86,14 @@ pub fn rebuild(
                 bail!("reserved or duplicate review artifact: {name}");
             }
             fs::create_dir_all(target.parent().context("target parent")?)?;
-            fs::copy(entry.path(), &target)?;
+            // New files inherit the private output ACL instead of copying source ACLs.
+            let mut input = fs::File::open(entry.path())?;
+            let mut copy = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&target)?;
+            std::io::copy(&mut input, &mut copy)?;
+            drop(copy);
             if crate::verify::digest(entry.path())? != crate::verify::digest(&target)? {
                 bail!("source changed while copying: {name}");
             }
@@ -129,6 +135,7 @@ fn fingerprints(root: &Path) -> Result<std::collections::BTreeMap<PathBuf, (Stri
     let mut files = std::collections::BTreeMap::new();
     for entry in walkdir::WalkDir::new(root).follow_links(false) {
         let entry = entry?;
+        crate::platform::reject_link(entry.path())?;
         if entry.file_type().is_dir() {
             continue;
         }
@@ -167,4 +174,21 @@ fn relative_url(from: &Path, to: &Path) -> Result<String> {
         result.push('/');
     }
     Ok(result)
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+    #[test]
+    fn linked_paths_refuse_other_volumes_and_encode_names() {
+        assert!(relative_url(Path::new(r"C:\review\dashboard"), Path::new(r"D:\source")).is_err());
+        assert_eq!(
+            relative_url(
+                Path::new(r"C:\review\dashboard"),
+                Path::new(r"C:\source # case")
+            )
+            .unwrap(),
+            "../../source%20%23%20case/"
+        );
+    }
 }

@@ -1,15 +1,18 @@
-use anyhow::{Context, Result, bail};
+#[cfg(unix)]
+use anyhow::Context;
+use anyhow::{Result, bail};
 use clap::Parser;
+#[cfg(unix)]
 use opsforge_investigate::{
     collect,
     config::{CaptureDuration, CheckConfig, LinuxCheck, RunConfig},
     tui,
 };
-use std::{
-    path::PathBuf,
-    process::{Command, Stdio},
-};
+use std::path::PathBuf;
+#[cfg(unix)]
+use std::process::{Command, Stdio};
 
+#[cfg(unix)]
 #[derive(Parser)]
 #[command(
     about = "Collect a Linux investigation case with an offline dashboard",
@@ -58,6 +61,8 @@ struct Args {
 }
 
 fn main() -> Result<()> {
+    #[cfg(windows)]
+    opsforge_investigate::install_signal_handlers()?;
     if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("review")) {
         #[derive(Parser)]
         #[command(about = "Review a saved case interactively without collection")]
@@ -126,6 +131,25 @@ fn main() -> Result<()> {
             }
         }
     }
+    collect_main()
+}
+
+#[cfg(not(unix))]
+fn collect_main() -> Result<()> {
+    if std::env::args_os()
+        .nth(1)
+        .is_none_or(|arg| arg == "--help" || arg == "-h")
+    {
+        println!(
+            "opsforge-investigate\n\nSaved-case commands:\n  verify CASE [--json]\n  rebuild CASE --output DIRECTORY [--mode bundle|linked] [--allow-unverified]\n  review\n\nCollection is not available on Windows yet."
+        );
+        return Ok(());
+    }
+    bail!("collection is not available on this platform yet; use verify, rebuild, or review");
+}
+
+#[cfg(unix)]
+fn collect_main() -> Result<()> {
     let mut arguments = std::env::args_os().collect::<Vec<_>>();
     if arguments.get(1).is_some_and(|arg| arg == "collect") {
         arguments.remove(1);
@@ -224,6 +248,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
 fn execute(config: &RunConfig, interactive: bool) -> Result<()> {
     collect::install_signal_handlers()?;
     let root = if interactive {
@@ -236,6 +261,7 @@ fn execute(config: &RunConfig, interactive: bool) -> Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
 fn is_root() -> Result<bool> {
     let output = Command::new("id")
         .arg("-u")
@@ -247,6 +273,7 @@ fn is_root() -> Result<bool> {
     Ok(output.stdout == b"0\n")
 }
 
+#[cfg(unix)]
 fn command_exists(program: &str) -> bool {
     std::env::var_os("PATH")
         .is_some_and(|paths| std::env::split_paths(&paths).any(|path| path.join(program).is_file()))

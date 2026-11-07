@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 use opsforge_investigate::{collect, config::RunConfig};
 use std::fs;
 
@@ -25,6 +27,11 @@ fn imported_log_reaches_offline_report_with_escaped_text() {
     config.live_capture = false;
     config.imports.push(imported);
     let root = collect::run(&config, &|_| {}).expect("case run");
+    let info: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("case-info.json")).unwrap()).unwrap();
+    assert_eq!(info["format_version"], 1);
+    assert_eq!(info["platform"], std::env::consts::OS);
+    assert_eq!(info["architecture"], std::env::consts::ARCH);
     let events = fs::read_to_string(root.join("normalized/events.jsonl")).expect("events");
     let page = fs::read_to_string(root.join("dashboard/network.html")).expect("dashboard");
     let data = fs::read_to_string(root.join("dashboard/events.js")).expect("event data");
