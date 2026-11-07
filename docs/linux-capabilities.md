@@ -6,8 +6,10 @@ Existing release observations do not prove a new row passed.
 
 Implementation order: exfiltration, device timeline, downloads/file investigation,
 unified operational checks, acquisition, memory analysis, complete release gates.
-Optimization follows those gates. Windows tools keep their existing checks;
-the Windows investigator is a later expansion.
+Optimization follows those gates. The approved cross-platform programme now
+includes a Windows investigator and the pending disk/memory workflows; see
+[the implementation roadmap](investigator-roadmap.md). Existing evidence and
+pending statuses below remain unchanged until each gate has new evidence.
 
 ## Workflow
 

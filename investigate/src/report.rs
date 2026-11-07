@@ -10,6 +10,14 @@ use std::{
 use walkdir::WalkDir;
 
 pub fn generate(root: &Path) -> Result<()> {
+    generate_review(root, "../", None)
+}
+
+pub(crate) fn generate_review(
+    root: &Path,
+    evidence_base: &str,
+    review: Option<&serde_json::Value>,
+) -> Result<()> {
     let completion_path = root.join("completion.json");
     let completion = if completion_path.exists() {
         serde_json::from_reader(File::open(completion_path)?)?
@@ -107,6 +115,7 @@ pub fn generate(root: &Path) -> Result<()> {
             "window.caseData = {};\n",
             script_json(&serde_json::json!({
             "name": info.get("case_id").cloned().unwrap_or_else(|| serde_json::json!(root.file_name().unwrap_or_default().to_string_lossy())), "info": info, "coverage": coverage, "manifest": manifest, "checks": checks,
+                    "evidence_base": evidence_base, "review": review,
                     "counts": {"events": count, "uploads": uploads, "completed": completed, "downloads": downloads, "leads": leads, "failed": failures}
                 }))?
         ),
@@ -232,8 +241,8 @@ pub fn write_checksums(root: &Path) -> Result<()> {
     for entry in WalkDir::new(root).sort_by_file_name() {
         let entry = entry?;
         if !entry.file_type().is_file()
-            || entry.file_name() == "checksums.sha256"
-            || entry.file_name() == "checksums.sha256.tmp"
+            || entry.path() == root.join("checksums.sha256")
+            || entry.path() == path
         {
             continue;
         }

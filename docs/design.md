@@ -5,6 +5,16 @@ hosts without installing a language runtime. The Linux investigator runner is
 a prebuilt Rust binary for guided collection and offline reporting; it does not
 require Rust on the investigated host.
 
+The approved direction makes Rust the shared Linux/Windows orchestrator and
+keeps Bash and PowerShell as native, independently usable checks. Rust owns
+configuration, subprocess lifecycle, case preservation, normalization,
+verification, and reports. Established optional tools provide disk and memory
+acquisition and analysis. This is the target architecture, not a claim that
+Windows investigator support or forensic adapters have shipped.
+
+See [the implementation roadmap](investigator-roadmap.md) for delivery order,
+compatibility boundaries, and acceptance gates.
+
 ## Principles
 
 - Collect first, decide second: scripts preserve raw evidence before summarizing.

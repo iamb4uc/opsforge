@@ -11,7 +11,10 @@ use std::{
 };
 
 #[derive(Parser)]
-#[command(about = "Collect a Linux investigation case with an offline dashboard")]
+#[command(
+    about = "Collect a Linux investigation case with an offline dashboard",
+    after_help = "Saved cases: review (terminal), verify CASE [--json], rebuild CASE --output DIRECTORY [--mode bundle|linked]"
+)]
 struct Args {
     #[arg(
         long,
@@ -55,7 +58,79 @@ struct Args {
 }
 
 fn main() -> Result<()> {
-    let args = Args::parse();
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("review")) {
+        #[derive(Parser)]
+        #[command(about = "Review a saved case interactively without collection")]
+        struct ReviewArgs {}
+        ReviewArgs::parse_from(std::env::args_os().skip(1));
+        return opsforge_investigate::review_ui::run();
+    }
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("rebuild")) {
+        #[derive(Parser)]
+        struct RebuildArgs {
+            case: PathBuf,
+            #[arg(long)]
+            output: PathBuf,
+            #[arg(long, value_enum, default_value = "bundle")]
+            mode: opsforge_investigate::rebuild::ReviewMode,
+            #[arg(long)]
+            allow_unverified: bool,
+        }
+        let args = RebuildArgs::parse_from(std::env::args_os().skip(1));
+        let output = opsforge_investigate::rebuild::rebuild(
+            &args.case,
+            &args.output,
+            args.mode,
+            args.allow_unverified,
+        )?;
+        println!("Review: {}", output.display());
+        return Ok(());
+    }
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("verify")) {
+        #[derive(Parser)]
+        #[command(
+            name = "opsforge-investigate verify",
+            about = "Verify a saved case without collection or elevation"
+        )]
+        struct VerifyArgs {
+            case: PathBuf,
+            #[arg(long)]
+            json: bool,
+        }
+        let args = VerifyArgs::parse_from(std::env::args_os().skip(1));
+        match opsforge_investigate::verify::verify(&args.case) {
+            Ok(result) => {
+                if args.json {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    println!(
+                        "Source issues: {}\nReport issues: {}\nUnverified: {}",
+                        result.source_issues.len(),
+                        result.report_issues.len(),
+                        result.unverified.len()
+                    );
+                    for issue in result
+                        .source_issues
+                        .iter()
+                        .chain(&result.report_issues)
+                        .chain(&result.unverified)
+                    {
+                        println!("{issue}");
+                    }
+                }
+                std::process::exit(result.exit_code());
+            }
+            Err(error) => {
+                eprintln!("Cannot verify case: {error:#}");
+                std::process::exit(2);
+            }
+        }
+    }
+    let mut arguments = std::env::args_os().collect::<Vec<_>>();
+    if arguments.get(1).is_some_and(|arg| arg == "collect") {
+        arguments.remove(1);
+    }
+    let args = Args::parse_from(arguments);
     if args.config_stdin {
         if !is_root()? {
             bail!("--config-stdin requires root");

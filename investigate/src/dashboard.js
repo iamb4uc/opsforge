@@ -16,6 +16,10 @@
   $("case-name").textContent = data.name;
   $("case-info").textContent = `Operator: ${data.info.operator || "unknown"} | Started: ${data.info.started_at || "unknown"}`;
   const completion = window.caseCompletion;
+  if (data.review) {
+    const note = el("p", `Rebuilt review (${data.review.mode}, ${data.review.status}). ${data.review.verification.unverified.length ? "UNVERIFIED source: missing integrity metadata. " : ""}${data.review.mode === "linked" ? "Raw evidence depends on the original case remaining available." : "Evidence is copied into this bundle."}`, "note");
+    $("completion-status").before(note);
+  }
   $("completion-status").textContent = completion?.status === "finished_review_coverage"
     ? "Collection finished. Review source coverage for failures and missing history."
     : `Incomplete case (${completion?.status || "status unknown"}). This dashboard may show an earlier snapshot. Inspect retained JSONL and raw evidence. ${completion?.error || ""}`;
@@ -67,7 +71,7 @@
   const sub = (cell, text) => { if (text) cell.append(el("span", text, "sub")); };
   function rawLink(path) {
     if (!manifest.has(path) || !path.startsWith("raw/") || path.split("/").some((part) => ["", ".", ".."].includes(part))) return el("span", "Raw file unavailable");
-    const link = el("a", path); link.href = `../${path.split("/").map(encodeURIComponent).join("/")}`; link.download = path.split("/").pop();
+    const link = el("a", path); link.href = `${data.evidence_base || "../"}${path.split("/").map(encodeURIComponent).join("/")}`; link.download = path.split("/").pop();
     return link;
   }
   function reference(event, id) {

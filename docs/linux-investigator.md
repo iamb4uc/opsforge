@@ -1,5 +1,51 @@
 # Linux investigator
 
+## Saved-case integrity verification
+
+Run `opsforge-investigate verify CASE --json` to compare retained raw files with
+the acquisition manifest and saved files with final checksums. Verification
+does not collect evidence, request sudo, or write to the case. Keep the case
+directory unchanged while it runs. It checks recorded integrity, not authenticity.
+
+Exit status 0 means recorded hashes match, 1 means discrepancies or incomplete
+verification, and 2 means evaluation could not run. Source issues, generated
+report issues, and missing final checksums are reported separately. Unsafe paths,
+links and malformed checksum/manifest records are rejected. Native Windows
+support remains pending.
+
+## Rebuild a saved report
+
+Run `opsforge-investigate review` for terminal setup. Enter the source case and
+new output directory, choose bundle or linked storage, then select Verify source
+or Rebuild report. Missing-checksum acceptance is a separate toggle and defaults
+off. Esc exits when idle; paths accept spaces. Verification/rebuilding runs on a
+worker while the terminal continues responding. During an operation, the form
+waits for safe completion before accepting another operation or exiting; it does
+not abandon an evidence copy. For unattended jobs, use the commands below. This
+screen does not collect or request elevation.
+
+```bash
+opsforge-investigate rebuild CASE --output NEW_DIRECTORY --mode bundle
+opsforge-investigate rebuild CASE --output NEW_DIRECTORY --mode linked
+```
+
+The output parent must exist; the destination must be new and outside the source
+case. Bundle is the default and copies retained evidence. Linked mode copies
+analysis inputs but links raw evidence to the original case; preserve the relative
+directory layout. The original case is never intentionally modified. Keep it
+unchanged throughout verification and copying.
+
+Missing or damaged generated reports may be rebuilt. Source integrity failures
+block rebuilding. Missing final checksums require `--allow-unverified` and retain
+an unverified warning. This override does not allow known hash mismatches.
+Acquisition completion is preserved; `review.json` records rebuild provenance
+and failure status separately. Failed outputs are retained for inspection.
+
+Rebuilding uses saved normalized records, not new raw parsing. Rebuild from the
+original acquisition case, not a prior review. The verifier expects local raw
+files: verify the original case for linked reviews, rather than interpreting
+their intentionally absent raw copies as lost acquisition evidence.
+
 The setup menu can also select [Linux operational checks](investigator-checks.md)
 and their target/baseline settings. Their results appear in the Checks page.
 
