@@ -8,6 +8,37 @@ permissions:
   contents: read
 
 jobs:
+  investigator:
+    name: windows investigator build and saved-case tests
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+      - name: Rust toolchain
+        shell: pwsh
+        run: rustup toolchain install 1.93.0 --profile minimal --component clippy,rustfmt
+      - name: Rust checks
+        shell: pwsh
+        run: |
+          cargo +1.93.0 fmt --manifest-path investigate/Cargo.toml --check
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cargo +1.93.0 clippy --locked --manifest-path investigate/Cargo.toml --all-targets -- -D warnings
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cargo +1.93.0 test --locked --manifest-path investigate/Cargo.toml
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cargo +1.93.0 build --locked --manifest-path investigate/Cargo.toml
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          .\investigate\target\debug\opsforge-investigate.exe --help
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: private-directory helper parser
+        shell: powershell
+        run: |
+          $tokens = $null
+          $parseErrors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path investigate/src/private-directory.ps1), [ref]$tokens, [ref]$parseErrors)
+          if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
+
   powershell:
     name: powershell validation
     runs-on: windows-latest

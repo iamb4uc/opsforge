@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 use opsforge_investigate::{collect, config::RunConfig, transfers::dnsmasq_event};
 use serde_json::Value;
 use std::fs;

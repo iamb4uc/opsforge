@@ -42,14 +42,57 @@ pub(crate) fn generated(path: &str) -> bool {
         )
 }
 
-fn valid_path(path: &str) -> Result<()> {
+pub(crate) fn valid_path(path: &str) -> Result<()> {
     if path.is_empty()
         || path.contains(['\\', ':', '\n', '\r', '\0'])
         || path.split('/').any(|s| matches!(s, "" | "." | ".."))
     {
         bail!("unsafe case-relative path: {path:?}");
     }
+    #[cfg(windows)]
+    for part in path.split('/') {
+        let stem = part
+            .split('.')
+            .next()
+            .unwrap_or_default()
+            .to_ascii_uppercase();
+        if part.ends_with([' ', '.'])
+            || part
+                .chars()
+                .any(|c| c.is_control() || "<>\"|?*".contains(c))
+            || matches!(
+                stem.as_str(),
+                "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+            )
+            || (stem.starts_with("COM") || stem.starts_with("LPT"))
+                && matches!(
+                    &stem[3..],
+                    "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+                )
+        {
+            bail!("artifact name cannot be represented safely on Windows: {part:?}");
+        }
+    }
     Ok(())
+}
+
+#[cfg(all(test, windows))]
+#[test]
+fn windows_artifact_names_reject_devices_and_aliases() {
+    for path in [
+        "raw/CON",
+        "raw/nul.txt",
+        "raw/COM1",
+        "raw/LPT².txt",
+        "raw/file.",
+        "raw/file ",
+        "raw/a:b",
+        "raw/a\\b",
+        "raw/a?b",
+    ] {
+        assert!(valid_path(path).is_err(), "accepted {path}");
+    }
+    assert!(valid_path("raw/normal # file.txt").is_ok());
 }
 
 fn valid_hash(hash: &str) -> Result<()> {
@@ -80,12 +123,14 @@ pub(crate) fn digest(path: &Path) -> Result<(String, u64)> {
 /// Verify a quiescent saved case without writing to it. This checks consistency,
 /// not authenticity; callers must keep the directory unchanged during the read.
 pub fn verify(root: &Path) -> Result<Verification> {
+    crate::platform::reject_link_ancestors(root)?;
     if !fs::symlink_metadata(root)?.is_dir() {
         bail!("case must be a real directory");
     }
     let mut files = BTreeSet::new();
     for entry in walkdir::WalkDir::new(root).follow_links(false) {
         let entry = entry?;
+        crate::platform::reject_link(entry.path())?;
         let kind = entry.file_type();
         if !kind.is_file() && !kind.is_dir() {
             bail!(
@@ -94,12 +139,7 @@ pub fn verify(root: &Path) -> Result<Verification> {
             );
         }
         if kind.is_file() {
-            let path = entry
-                .path()
-                .strip_prefix(root)?
-                .to_str()
-                .context("non-UTF-8 case path")?
-                .to_owned();
+            let path = crate::platform::artifact_path(entry.path().strip_prefix(root)?)?;
             valid_path(&path)?;
             files.insert(path);
         }

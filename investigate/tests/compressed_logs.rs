@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 use opsforge_investigate::{collect, config::RunConfig};
 use std::{fs, process::Command};
 

@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 use opsforge_investigate::{
     case::{Coverage, CoverageState},
     collect,

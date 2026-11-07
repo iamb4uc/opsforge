@@ -10,7 +10,7 @@ This file records implementation work, not a support claim.
 | Slice | Implementation | Validation |
 |---|---|---|
 | Policy and architecture alignment | documentation updated | diff reviewed |
-| Portable case/runtime foundation | pending | pending |
+| Portable case/runtime foundation | native directory permissions, portable artifact paths, Windows job containment and Linux collection separation implemented | Linux regressions and Windows cross-compilation passed; native Windows CI pending |
 | Saved-case verification and rebuilding | Linux CLI and review TUI implemented | eleven saved-case tests, three UI tests, PTY verify/bundle/linked workflows and all nine browser pages in both modes passed; cross-platform gates pending |
 | Windows collection and check parity | pending | pending |
 | Disk acquisition and recovery | pending | pending |
@@ -70,6 +70,21 @@ Never render into or rehash the source case.
 Isolate native discovery, elevation, private directories, and child cancellation
 from shared parsers/reporting. Windows requires private ACLs and owned child-tree
 cleanup; saved-case commands never enter collection or request elevation.
+
+The Windows binary currently exposes saved-case commands only. Linux collection,
+embedded Bash checks and their integration fixtures remain Linux-only; this is
+not Windows collection parity. New Linux acquisitions record format version,
+platform and architecture; old cases remain readable without these fields.
+
+Windows rebuilding uses the installed Windows PowerShell 5.1 to create a private
+directory with a protected current-user ACL before writing evidence. It checks
+that the filesystem retained that ACL and refuses reparse-point ancestors.
+Files are streamed into new destinations so source ACLs are not copied. The
+`process-wrap` backend assigns child processes to a job before they run; normal
+completion, cancellation and guard cleanup retain ownership of descendants.
+Forced termination of the investigator is not a validated cleanup guarantee.
+Cases and output parents must remain stable throughout review. Cross-volume
+linked output and Windows device/ambiguous artifact names are rejected.
 
 Windows must cover browser profiles (Chromium/Edge/Firefox), existing application
 and transfer formats, EVTX and structured Event Logs, PowerShell activity,

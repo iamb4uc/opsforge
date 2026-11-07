@@ -260,7 +260,7 @@ pub fn write_checksums(root: &Path) -> Result<()> {
             output,
             "{:x}  {}",
             hash.finalize(),
-            entry.path().strip_prefix(root)?.display()
+            crate::platform::artifact_path(entry.path().strip_prefix(root)?)?
         )?;
     }
     output.flush()?;
@@ -279,6 +279,7 @@ fn write_atomic(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> Result<()
     Ok(())
 }
 
+#[cfg(unix)]
 pub(crate) fn write_completion(root: &Path, status: &str, error: Option<&str>) -> Result<()> {
     let completion = serde_json::json!({
         "status": status,
